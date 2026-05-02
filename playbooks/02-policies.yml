@@ -1,0 +1,122 @@
+---
+# Apply policies.yaml to CCC. Resolves source_policy_group by name from
+# the state file written by 01-policy-groups.yml.
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[02] Apply Policies from policies.yaml"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+    - ../policies.yaml
+  tasks:
+    - name: Read cached token
+      ansible.builtin.slurp:
+        src: /tmp/.ccc_token
+      register: token_blob
+      no_log: true
+
+    - name: Set token fact
+      ansible.builtin.set_fact:
+        ccc_token: "{{ token_blob.content | b64decode }}"
+      no_log: true
+
+    - name: Read Policy Group state from previous play
+      ansible.builtin.slurp:
+        src: "{{ state_file }}"
+      register: state_blob
+      ignore_errors: true
+
+    - name: Fail if state file is missing
+      ansible.builtin.fail:
+        msg: "State file {{ state_file }} not found — run `make policy-groups` first."
+      when: state_blob is failed
+
+    - name: Parse state
+      ansible.builtin.set_fact:
+        state: "{{ state_blob.content | b64decode | from_json }}"
+
+    - name: List existing policies in target Policy Set
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Accept: application/json
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: 200
+      register: existing_policies
+
+    - name: Build name→id map of existing policies
+      ansible.builtin.set_fact:
+        existing_policy_map: >-
+          {{ dict(existing_policies.json.content
+                  | map(attribute='name')
+                  | zip(existing_policies.json.content | map(attribute='id'))) }}
+
+    - name: Create policies that do not exist yet
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Content-Type: application/json
+          Accept: application/json
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description | trim }}"
+          srcPolicyGroup: "{{ state.policy_groups[item.source_policy_group] }}"
+          dstPolicyGroup: "{{ item.destination_policy_group_id }}"
+          securityProfiles: ["{{ item.security_profile_id }}"]
+          finalAction: "{{ item.security_profile_id }}"
+          monitorMode: "{{ item.monitor_mode }}"
+          isMirrored: "{{ item.mirrored }}"
+          isCustomName: false
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: [200, 201]
+      when: item.name not in existing_policy_map
+      loop: "{{ policies }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Re-list policies to capture new IDs
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Accept: application/json
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: 200
+      register: refreshed_policies
+
+    - name: Build final name→id map for our managed policies
+      ansible.builtin.set_fact:
+        policy_id_map: >-
+          {{ dict(refreshed_policies.json.content
+                  | selectattr('name','in', policies | map(attribute='name') | list)
+                  | map(attribute='name')
+                  | zip(refreshed_policies.json.content
+                        | selectattr('name','in', policies | map(attribute='name') | list)
+                        | map(attribute='id'))) }}
+
+    - name: Persist combined state to disk
+      ansible.builtin.copy:
+        content: "{{ {'policy_groups': state.policy_groups, 'policies': policy_id_map} | to_nice_json }}"
+        dest: "{{ state_file }}"
+        mode: "0644"
+
+    - name: "Policies in state"
+      ansible.builtin.debug:
+        msg: |
+          Policy: {{ item.name }}
+          ID:     {{ policy_id_map[item.name] }}
+          Source: {{ item.source_policy_group }}
+          Dest:   {{ ccc_dest_policy_group_name }}
+          SP:     {{ ccc_security_profile_name }}
+          Mode:   {{ item.monitor_mode }}
+      loop: "{{ policies }}"
+      loop_control:
+        label: "{{ item.name }}"

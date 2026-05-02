@@ -1,0 +1,7 @@
+creds.yml
+.state.json
+*.retry
+.vault_pass
+__pycache__/
+*.pyc
+.DS_Store

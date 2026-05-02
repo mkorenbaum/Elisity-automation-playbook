@@ -1,0 +1,40 @@
+---
+# Read-only proof of life — pulls connector inventory from CCC over the
+# REST API and prints it as a clean table. This is the "open API" demo.
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[00] List connectors via CCC REST API"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+  tasks:
+    - name: Read cached token
+      ansible.builtin.slurp:
+        src: /tmp/.ccc_token
+      register: token_blob
+      no_log: true
+
+    - name: Set token fact
+      ansible.builtin.set_fact:
+        ccc_token: "{{ token_blob.content | b64decode }}"
+      no_log: true
+
+    - name: GET /api/identity-graph/v1/connector-connectivity
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/identity-graph/v1/connector-connectivity"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Accept: application/json
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: 200
+      register: connectors
+
+    - name: "Connector inventory ({{ connectors.json | length }} configured)"
+      ansible.builtin.debug:
+        msg: "  • {{ '%-32s' | format(item.type) }}  status={{ item.status | default('UNKNOWN') }}"
+      loop: "{{ connectors.json }}"
+      loop_control:
+        label: "{{ item.type }}"

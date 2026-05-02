@@ -1,0 +1,75 @@
+---
+# Tear down everything we created. Run between demos.
+# Safe — only deletes objects this repo created (tracked in state file).
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[99] Cleanup demo objects"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+    - ../policy-groups.yaml
+    - ../policies.yaml
+  tasks:
+    - name: Read cached token
+      ansible.builtin.slurp:
+        src: /tmp/.ccc_token
+      register: token_blob
+      no_log: true
+
+    - name: Set token fact
+      ansible.builtin.set_fact:
+        ccc_token: "{{ token_blob.content | b64decode }}"
+      no_log: true
+
+    - name: Read state
+      ansible.builtin.slurp:
+        src: "{{ state_file }}"
+      register: state_blob
+      ignore_errors: true
+
+    - name: Parse state
+      ansible.builtin.set_fact:
+        state: "{{ state_blob.content | b64decode | from_json }}"
+      when: state_blob is succeeded
+
+    - name: Delete demo policies
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies/{{ state.policies[item.name] }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: [200, 204, 404]
+      loop: "{{ policies }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - state is defined
+        - state.policies is defined
+        - item.name in state.policies
+
+    - name: Delete demo policy groups
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
+        method: DELETE
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: [200, 204, 404]
+      loop: "{{ policy_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when:
+        - state is defined
+        - state.policy_groups is defined
+        - item.name in state.policy_groups
+
+    - name: Remove state file
+      ansible.builtin.file:
+        path: "{{ state_file }}"
+        state: absent
+
+    - ansible.builtin.debug:
+        msg: "Demo objects torn down. CCC tenant is clean."

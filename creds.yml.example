@@ -1,0 +1,9 @@
+# Copy to creds.yml and fill in the values for your CCC tenant.
+# creds.yml is git-ignored.
+#
+# Where to find these in CCC:
+#   Settings → API Clients → (your client) → ID + Secret
+#
+ccc_url:           "https://your-tenant.elisity.io"
+ccc_client_id:     "REPLACE_WITH_CLIENT_ID"
+ccc_client_secret: "REPLACE_WITH_CLIENT_SECRET"

@@ -1,0 +1,16 @@
+---
+# Git-tracked policy definitions.
+# Source PG references the name from policy-groups.yaml.
+# Destination PG is an existing object on the tenant (ID in group_vars/all.yml).
+
+policies:
+  - name: "forrester-demo-imaging > Unverified Servers Storage"
+    description: |
+      Allow imaging workstations to talk to the Unverified Servers Storage
+      group. Created in MONITOR_ONLY (simulation) — no enforcement until an
+      operator promotes it.
+    source_policy_group: forrester-demo-imaging   # by name, resolved at apply time
+    destination_policy_group_id: "{{ ccc_dest_policy_group_id }}"
+    security_profile_id:         "{{ ccc_security_profile_id }}"
+    monitor_mode: MONITOR_ONLY   # MONITOR_ONLY | MONITOR_AND_ENFORCE | MONITOR_EXTERNAL
+    mirrored: false

@@ -1,0 +1,20 @@
+---
+# Git-tracked policy group definition.
+# Edit me, run `make demo` again, watch the change land in CCC.
+#
+# This is the GitOps moment for the analyst — the source of truth lives
+# in this file, not in the CCC UI.
+
+policy_groups:
+  - name: forrester-demo-imaging
+    description: |
+      Imaging workstations classified by hostname pattern.
+      Created from a Git-tracked YAML file via Ansible — no UI clicks.
+    type: DYNAMIC
+    security_level: 3   # IEC 62443 SL-3
+    auto_lock_devices: false
+    match:
+      attribute: core.hostname
+      operator: CONTAINS
+      match_values:
+        - IMAGING

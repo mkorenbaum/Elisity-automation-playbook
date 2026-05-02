@@ -1,0 +1,87 @@
+---
+# Re-fetches everything we created and prints it. Useful for the analyst
+# to see live state coming back from the API.
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[03] Verify created objects"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+    - ../policy-groups.yaml
+    - ../policies.yaml
+  tasks:
+    - name: Read cached token
+      ansible.builtin.slurp:
+        src: /tmp/.ccc_token
+      register: token_blob
+      no_log: true
+
+    - name: Set token fact
+      ansible.builtin.set_fact:
+        ccc_token: "{{ token_blob.content | b64decode }}"
+      no_log: true
+
+    - name: Read state
+      ansible.builtin.slurp:
+        src: "{{ state_file }}"
+      register: state_blob
+
+    - name: Parse state
+      ansible.builtin.set_fact:
+        state: "{{ state_blob.content | b64decode | from_json }}"
+
+    - name: Fetch each created Policy Group
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Accept: application/json
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: 200
+      loop: "{{ policy_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: pg_fetch
+
+    - name: "Policy Group state"
+      ansible.builtin.debug:
+        msg:
+          - "Name:               {{ item.json.name }}"
+          - "ID:                 {{ item.json.id }}"
+          - "Type:               {{ item.json.policyGroupType }}"
+          - "Security Level:     {{ item.json.securityLevel }}"
+          - "Matched devices:    {{ item.json.assetToPolicyGroupCount | default(0) }} (online: {{ item.json.onlineAssetToPolicyGroupCount | default(0) }})"
+          - "Status:             {{ item.json.status }}"
+      loop: "{{ pg_fetch.results }}"
+      loop_control:
+        label: "{{ item.json.name }}"
+
+    - name: Fetch all policies in target Policy Set
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Accept: application/json
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: 200
+      register: all_policies
+
+    - name: "Policy state"
+      ansible.builtin.debug:
+        msg:
+          - "Name:        {{ row.name }}"
+          - "ID:          {{ row.id }}"
+          - "Source:      {{ row.srcPolicyGroupName }}"
+          - "Dest:        {{ row.dstPolicyGroupName }}"
+          - "SP:          {{ row.finalActionName }}"
+          - "Type:        {{ row.policyTypeName | default('?') }}"
+      vars:
+        row: "{{ (all_policies.json.content | selectattr('name','equalto', item.name) | list | first) }}"
+      loop: "{{ policies }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: (all_policies.json.content | selectattr('name','equalto', item.name) | list | length) > 0

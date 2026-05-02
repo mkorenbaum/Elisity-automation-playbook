@@ -1,0 +1,106 @@
+---
+# Apply policy-groups.yaml to CCC. Idempotent: looks up by name, creates
+# if missing.
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[01] Apply Policy Groups from policy-groups.yaml"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+    - ../policy-groups.yaml
+  tasks:
+    - name: Read cached token
+      ansible.builtin.slurp:
+        src: /tmp/.ccc_token
+      register: token_blob
+      no_log: true
+
+    - name: Set token fact
+      ansible.builtin.set_fact:
+        ccc_token: "{{ token_blob.content | b64decode }}"
+      no_log: true
+
+    - name: List existing Policy Groups
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Accept: application/json
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: 200
+      register: existing_pgs
+
+    - name: Build name→id map of existing PGs
+      ansible.builtin.set_fact:
+        existing_pg_map: >-
+          {{ dict(existing_pgs.json.content
+                  | map(attribute='name')
+                  | zip(existing_pgs.json.content | map(attribute='id'))) }}
+
+    - name: Create Policy Groups that do not exist yet
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v2/policy-groups/dynamic"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Content-Type: application/json
+          Accept: application/json
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description | trim }}"
+          policyGroupType: "{{ item.type }}"
+          securityLevel: "{{ item.security_level }}"
+          autoLockDevices: "{{ item.auto_lock_devices }}"
+          labels:
+            - "{{ ccc_default_label_id }}"
+          matchingCriteria:
+            conditionBlocks:
+              - conditions:
+                  - operator: "{{ item.match.operator }}"
+                    attributeFqdn: "{{ item.match.attribute }}"
+                    attributeType: STRING
+                    value: "{{ item.match.match_values }}"
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: [200, 201]
+      when: item.name not in existing_pg_map
+      loop: "{{ policy_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Re-list Policy Groups to capture new IDs
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ccc_token }}"
+          Accept: application/json
+        validate_certs: "{{ ccc_validate_certs }}"
+        status_code: 200
+      register: refreshed_pgs
+
+    - name: Build final name→id map for our managed PGs
+      ansible.builtin.set_fact:
+        pg_id_map: >-
+          {{ dict(refreshed_pgs.json.content
+                  | selectattr('name','in', policy_groups | map(attribute='name') | list)
+                  | map(attribute='name')
+                  | zip(refreshed_pgs.json.content
+                        | selectattr('name','in', policy_groups | map(attribute='name') | list)
+                        | map(attribute='id'))) }}
+
+    - name: Persist Policy Group state to disk
+      ansible.builtin.copy:
+        content: "{{ {'policy_groups': pg_id_map} | to_nice_json }}"
+        dest: "{{ state_file }}"
+        mode: "0644"
+
+    - name: "Policy Groups in state"
+      ansible.builtin.debug:
+        msg: "  • {{ item.key }}  →  {{ item.value }}"
+      loop: "{{ pg_id_map | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"

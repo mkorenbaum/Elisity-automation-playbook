@@ -1,0 +1,39 @@
+---
+# Acquires an OAuth2 client_credentials token from CCC.
+# Registers `ccc_token` for use by subsequent tasks.
+# Imported via `ansible.builtin.import_playbook` — keeps the secret in one place.
+
+- name: "[auth] OAuth client_credentials → access token"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+  tasks:
+    - name: Request access token
+      ansible.builtin.uri:
+        url: "{{ ccc_url }}/auth/realms/elisity/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          grant_type: client_credentials
+          client_id: "{{ ccc_client_id }}"
+          client_secret: "{{ ccc_client_secret }}"
+          scope: openid
+        validate_certs: "{{ ccc_validate_certs }}"
+        return_content: false
+        status_code: 200
+      register: ccc_auth_response
+      no_log: true
+
+    - name: Persist token to /tmp for downstream plays
+      ansible.builtin.copy:
+        content: "{{ ccc_auth_response.json.access_token }}"
+        dest: "/tmp/.ccc_token"
+        mode: "0600"
+      no_log: true
+
+    - name: "[auth] Authenticated to {{ ccc_url }}"
+      ansible.builtin.debug:
+        msg:
+          - "Token acquired (expires in {{ ccc_auth_response.json.expires_in }}s)"
+          - "Cached at /tmp/.ccc_token"
