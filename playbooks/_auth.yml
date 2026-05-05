@@ -1,13 +1,14 @@
 ---
 # Acquires an OAuth2 client_credentials token from CCC.
-# Registers `ccc_token` for use by subsequent tasks.
-# Imported via `ansible.builtin.import_playbook` — keeps the secret in one place.
+# Caches the bare token at /tmp/.ccc_token for downstream plays.
 #
-# Implementation note: we deliberately use `return_content: yes` and parse with
-# `from_json` instead of relying on the `uri` module's `.json` attribute. Some
-# Ansible builds don't auto-populate `.json` when Keycloak returns
-# `Content-Type: application/json;charset=UTF-8`. The `from_json` filter is
-# version-stable across ansible-core 2.16+.
+# Implementation note: we deliberately use curl via the command module
+# instead of ansible.builtin.uri. The uri module's response handling
+# (.json, .content) varies enough across Ansible builds — and especially
+# between macOS and Linux — that we hit silent empty-content responses.
+# curl is on every modern Mac and behaves identically across systems,
+# and it makes the demo more transparent: the analyst literally sees a
+# REST API call happen against CCC.
 
 - name: "[auth] OAuth client_credentials → access token"
   hosts: local
@@ -15,36 +16,44 @@
   vars_files:
     - ../creds.yml
   tasks:
-    - name: Request access token
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/auth/realms/elisity/protocol/openid-connect/token"
-        method: POST
-        body_format: form-urlencoded
-        body:
-          grant_type: client_credentials
-          client_id: "{{ ccc_client_id }}"
-          client_secret: "{{ ccc_client_secret }}"
-          scope: openid
-        validate_certs: "{{ ccc_validate_certs }}"
-        return_content: true
-        status_code: 200
-      register: ccc_auth_response
-      no_log: true
+    - name: Verify curl is available
+      ansible.builtin.command: curl --version
+      register: curl_check
+      changed_when: false
+      failed_when: curl_check.rc != 0
 
-    - name: Parse token response
-      ansible.builtin.set_fact:
-        ccc_token_data: "{{ ccc_auth_response.content | from_json }}"
+    - name: Acquire access token via curl
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --request
+          - POST
+          - --data-urlencode
+          - grant_type=client_credentials
+          - --data-urlencode
+          - "client_id={{ ccc_client_id }}"
+          - --data-urlencode
+          - "client_secret={{ ccc_client_secret }}"
+          - --data-urlencode
+          - scope=openid
+          - "{{ ccc_url }}/auth/realms/elisity/protocol/openid-connect/token"
+      register: token_resp
       no_log: true
+      changed_when: false
 
-    - name: Persist token to /tmp for downstream plays
+    - name: Cache bare token at /tmp/.ccc_token
       ansible.builtin.copy:
-        content: "{{ ccc_token_data.access_token }}"
-        dest: "/tmp/.ccc_token"
+        content: "{{ (token_resp.stdout | from_json).access_token }}"
+        dest: /tmp/.ccc_token
         mode: "0600"
       no_log: true
 
     - name: "[auth] Authenticated to {{ ccc_url }}"
       ansible.builtin.debug:
         msg:
-          - "Token acquired (expires in {{ ccc_token_data.expires_in }}s)"
+          - "Token acquired (expires in {{ (token_resp.stdout | from_json).expires_in }}s)"
           - "Cached at /tmp/.ccc_token"

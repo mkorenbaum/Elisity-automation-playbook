@@ -22,20 +22,24 @@
       no_log: true
 
     - name: GET /api/identity-graph/v1/connector-connectivity
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/identity-graph/v1/connector-connectivity"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Accept: application/json
-        validate_certs: "{{ ccc_validate_certs }}"
-        return_content: true
-        status_code: 200
-      register: connectors
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Accept: application/json"
+          - "{{ ccc_url }}/api/identity-graph/v1/connector-connectivity"
+      register: connectors_resp
+      changed_when: false
 
     - name: Parse connectors response
       ansible.builtin.set_fact:
-        connectors_list: "{{ connectors.content | from_json }}"
+        connectors_list: "{{ connectors_resp.stdout | from_json }}"
 
     - name: "Connector inventory ({{ connectors_list | length }} configured)"
       ansible.builtin.debug:

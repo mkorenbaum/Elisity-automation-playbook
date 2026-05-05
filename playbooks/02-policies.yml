@@ -37,21 +37,25 @@
       ansible.builtin.set_fact:
         state: "{{ state_blob.content | b64decode | from_json }}"
 
-    - name: List existing policies in target Policy Set
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Accept: application/json
-        validate_certs: "{{ ccc_validate_certs }}"
-        return_content: true
-        status_code: 200
-      register: existing_policies
+    - name: List existing policies in target Policy Set (curl GET)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Accept: application/json"
+          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+      register: existing_policies_resp
+      changed_when: false
 
     - name: Parse existing policies content
       ansible.builtin.set_fact:
-        existing_policy_content: "{{ (existing_policies.content | from_json).content }}"
+        existing_policy_content: "{{ (existing_policies_resp.stdout | from_json).content }}"
 
     - name: Build name→id map of existing policies
       ansible.builtin.set_fact:
@@ -60,16 +64,27 @@
                   | map(attribute='name')
                   | zip(existing_policy_content | map(attribute='id'))) }}
 
-    - name: Create policies that do not exist yet
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Content-Type: application/json
-          Accept: application/json
-        body_format: json
-        body:
+    - name: Create policies that do not exist yet (curl POST)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --request
+          - POST
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Content-Type: application/json"
+          - --header
+          - "Accept: application/json"
+          - --data
+          - "{{ policy_body | to_json }}"
+          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies"
+      vars:
+        policy_body:
           name: "{{ item.name }}"
           description: "{{ item.description | trim }}"
           srcPolicyGroup: "{{ state.policy_groups[item.source_policy_group] }}"
@@ -79,28 +94,31 @@
           monitorMode: "{{ item.monitor_mode }}"
           isMirrored: "{{ item.mirrored }}"
           isCustomName: false
-        validate_certs: "{{ ccc_validate_certs }}"
-        status_code: [200, 201]
       when: item.name not in existing_policy_map
       loop: "{{ policies }}"
       loop_control:
         label: "{{ item.name }}"
+      changed_when: true
 
-    - name: Re-list policies to capture new IDs
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Accept: application/json
-        validate_certs: "{{ ccc_validate_certs }}"
-        return_content: true
-        status_code: 200
-      register: refreshed_policies
+    - name: Re-list policies to capture new IDs (curl GET)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Accept: application/json"
+          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+      register: refreshed_policies_resp
+      changed_when: false
 
     - name: Parse refreshed policies content
       ansible.builtin.set_fact:
-        refreshed_policy_content: "{{ (refreshed_policies.content | from_json).content }}"
+        refreshed_policy_content: "{{ (refreshed_policies_resp.stdout | from_json).content }}"
 
     - name: Build final name→id map for our managed policies
       ansible.builtin.set_fact:

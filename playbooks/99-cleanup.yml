@@ -34,14 +34,22 @@
         state: "{{ state_blob.content | b64decode | from_json }}"
       when: state_blob is succeeded
 
-    - name: Delete demo policies
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies/{{ state.policies[item.name] }}"
-        method: DELETE
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-        validate_certs: "{{ ccc_validate_certs }}"
-        status_code: [200, 204, 404]
+    - name: Delete demo policies (curl DELETE)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --request
+          - DELETE
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --output
+          - /dev/null
+          - --write-out
+          - "%{http_code}"
+          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies/{{ state.policies[item.name] }}"
       loop: "{{ policies }}"
       loop_control:
         label: "{{ item.name }}"
@@ -49,15 +57,24 @@
         - state is defined
         - state.policies is defined
         - item.name in state.policies
+      changed_when: true
 
-    - name: Delete demo policy groups
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
-        method: DELETE
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-        validate_certs: "{{ ccc_validate_certs }}"
-        status_code: [200, 204, 404]
+    - name: Delete demo policy groups (curl DELETE)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --request
+          - DELETE
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --output
+          - /dev/null
+          - --write-out
+          - "%{http_code}"
+          - "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
       loop: "{{ policy_groups }}"
       loop_control:
         label: "{{ item.name }}"
@@ -65,6 +82,7 @@
         - state is defined
         - state.policy_groups is defined
         - item.name in state.policy_groups
+      changed_when: true
 
     - name: Remove state file
       ansible.builtin.file:

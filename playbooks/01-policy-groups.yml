@@ -22,39 +22,54 @@
         ccc_token: "{{ token_blob.content | b64decode }}"
       no_log: true
 
-    - name: List existing Policy Groups
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Accept: application/json
-        validate_certs: "{{ ccc_validate_certs }}"
-        return_content: true
-        status_code: 200
-      register: existing_pgs
+    - name: List existing Policy Groups (curl GET)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Accept: application/json"
+          - "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
+      register: existing_pgs_resp
+      changed_when: false
+
+    - name: Parse existing PG list
+      ansible.builtin.set_fact:
+        existing_pg_content: "{{ (existing_pgs_resp.stdout | from_json).content }}"
 
     - name: Build name→id map of existing PGs
-      ansible.builtin.set_fact:
-        existing_pg_content: "{{ (existing_pgs.content | from_json).content }}"
-
-    - name: Build name→id map of existing PGs (continued)
       ansible.builtin.set_fact:
         existing_pg_map: >-
           {{ dict(existing_pg_content
                   | map(attribute='name')
                   | zip(existing_pg_content | map(attribute='id'))) }}
 
-    - name: Create Policy Groups that do not exist yet
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v2/policy-groups/dynamic"
-        method: POST
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Content-Type: application/json
-          Accept: application/json
-        body_format: json
-        body:
+    - name: Create Policy Groups that do not exist yet (curl POST)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --request
+          - POST
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Content-Type: application/json"
+          - --header
+          - "Accept: application/json"
+          - --data
+          - "{{ pg_body | to_json }}"
+          - "{{ ccc_url }}/api/policy/v2/policy-groups/dynamic"
+      vars:
+        pg_body:
           name: "{{ item.name }}"
           description: "{{ item.description | trim }}"
           policyGroupType: "{{ item.type }}"
@@ -69,28 +84,31 @@
                     attributeFqdn: "{{ item.match.attribute }}"
                     attributeType: STRING
                     value: "{{ item.match.match_values }}"
-        validate_certs: "{{ ccc_validate_certs }}"
-        status_code: [200, 201]
       when: item.name not in existing_pg_map
       loop: "{{ policy_groups }}"
       loop_control:
         label: "{{ item.name }}"
+      changed_when: true
 
-    - name: Re-list Policy Groups to capture new IDs
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Accept: application/json
-        validate_certs: "{{ ccc_validate_certs }}"
-        return_content: true
-        status_code: 200
-      register: refreshed_pgs
+    - name: Re-list Policy Groups to capture new IDs (curl GET)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Accept: application/json"
+          - "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
+      register: refreshed_pgs_resp
+      changed_when: false
 
     - name: Parse refreshed PG list
       ansible.builtin.set_fact:
-        refreshed_pg_content: "{{ (refreshed_pgs.content | from_json).content }}"
+        refreshed_pg_content: "{{ (refreshed_pgs_resp.stdout | from_json).content }}"
 
     - name: Build final name→id map for our managed PGs
       ansible.builtin.set_fact:

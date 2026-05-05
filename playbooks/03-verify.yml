@@ -32,20 +32,24 @@
       ansible.builtin.set_fact:
         state: "{{ state_blob.content | b64decode | from_json }}"
 
-    - name: Fetch each created Policy Group
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Accept: application/json
-        validate_certs: "{{ ccc_validate_certs }}"
-        return_content: true
-        status_code: 200
+    - name: Fetch each created Policy Group (curl GET)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Accept: application/json"
+          - "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
       loop: "{{ policy_groups }}"
       loop_control:
         label: "{{ item.name }}"
       register: pg_fetch
+      changed_when: false
 
     - name: "Policy Group state"
       ansible.builtin.debug:
@@ -57,26 +61,30 @@
           - "Matched devices:    {{ pg.assetToPolicyGroupCount | default(0) }} (online: {{ pg.onlineAssetToPolicyGroupCount | default(0) }})"
           - "Status:             {{ pg.status }}"
       vars:
-        pg: "{{ item.content | from_json }}"
+        pg: "{{ item.stdout | from_json }}"
       loop: "{{ pg_fetch.results }}"
       loop_control:
-        label: "{{ (item.content | from_json).name }}"
+        label: "{{ (item.stdout | from_json).name }}"
 
-    - name: Fetch all policies in target Policy Set
-      ansible.builtin.uri:
-        url: "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
-        method: GET
-        headers:
-          Authorization: "Bearer {{ ccc_token }}"
-          Accept: application/json
-        validate_certs: "{{ ccc_validate_certs }}"
-        return_content: true
-        status_code: 200
-      register: all_policies
+    - name: Fetch all policies in target Policy Set (curl GET)
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
+          - --header
+          - "Authorization: Bearer {{ ccc_token }}"
+          - --header
+          - "Accept: application/json"
+          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+      register: all_policies_resp
+      changed_when: false
 
     - name: Parse all policies content
       ansible.builtin.set_fact:
-        all_policies_content: "{{ (all_policies.content | from_json).content }}"
+        all_policies_content: "{{ (all_policies_resp.stdout | from_json).content }}"
 
     - name: "Policy state"
       ansible.builtin.debug:
