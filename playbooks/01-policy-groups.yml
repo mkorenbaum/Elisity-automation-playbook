@@ -30,7 +30,7 @@
           - call
           - --token
           - "{{ ccc_token }}"
-          - "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
+          - "{{ ccc_base }}/api/policy/v2/policy-groups?size=500"
       register: existing_pgs_resp
       changed_when: false
 
@@ -83,7 +83,7 @@
           - "{{ ccc_token }}"
           - --body-file
           - "/tmp/.pg-{{ item.name }}.json"
-          - "{{ ccc_url }}/api/policy/v2/policy-groups/dynamic"
+          - "{{ ccc_base }}/api/policy/v2/policy-groups/dynamic"
       when: item.name not in existing_pg_map
       loop: "{{ policy_groups }}"
       loop_control:
@@ -98,7 +98,7 @@
           - call
           - --token
           - "{{ ccc_token }}"
-          - "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
+          - "{{ ccc_base }}/api/policy/v2/policy-groups?size=500"
       register: refreshed_pgs_resp
       changed_when: false
 

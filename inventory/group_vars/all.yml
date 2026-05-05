@@ -29,3 +29,9 @@ state_file: "{{ playbook_dir }}/../.state.json"
 
 # urllib defaults.
 ccc_validate_certs: false
+
+# Normalized base URL (strips any trailing slashes from ccc_url so that
+# concatenations like "{{ ccc_base }}/auth/..." don't yield "//auth/...").
+# Lazily evaluated, so it picks up whatever ccc_url is set to in creds.yml
+# at play time.
+ccc_base: "{{ ccc_url | regex_replace('/+$', '') }}"

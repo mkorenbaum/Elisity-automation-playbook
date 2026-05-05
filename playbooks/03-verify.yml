@@ -40,7 +40,7 @@
           - call
           - --token
           - "{{ ccc_token }}"
-          - "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
+          - "{{ ccc_base }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
       loop: "{{ policy_groups }}"
       loop_control:
         label: "{{ item.name }}"
@@ -70,7 +70,7 @@
           - call
           - --token
           - "{{ ccc_token }}"
-          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+          - "{{ ccc_base }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
       register: all_policies_resp
       changed_when: false
 

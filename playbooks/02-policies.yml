@@ -45,7 +45,7 @@
           - call
           - --token
           - "{{ ccc_token }}"
-          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+          - "{{ ccc_base }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
       register: existing_policies_resp
       changed_when: false
 
@@ -93,7 +93,7 @@
           - "{{ ccc_token }}"
           - --body-file
           - "/tmp/.policy-{{ item.name | regex_replace('[^a-zA-Z0-9]+','-') }}.json"
-          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies"
+          - "{{ ccc_base }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies"
       when: item.name not in existing_policy_map
       loop: "{{ policies }}"
       loop_control:
@@ -108,7 +108,7 @@
           - call
           - --token
           - "{{ ccc_token }}"
-          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
+          - "{{ ccc_base }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
       register: refreshed_policies_resp
       changed_when: false
 

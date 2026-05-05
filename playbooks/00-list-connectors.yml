@@ -29,7 +29,7 @@
           - call
           - --token
           - "{{ ccc_token }}"
-          - "{{ ccc_url }}/api/identity-graph/v1/connector-connectivity"
+          - "{{ ccc_base }}/api/identity-graph/v1/connector-connectivity"
       register: connectors_resp
       changed_when: false
 

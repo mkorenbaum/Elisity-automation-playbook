@@ -26,7 +26,7 @@
           - python3
           - "{{ playbook_dir }}/../bin/ccc.py"
           - token
-          - "{{ ccc_url }}/auth/realms/elisity/protocol/openid-connect/token"
+          - "{{ ccc_base }}/auth/realms/elisity/protocol/openid-connect/token"
           - "{{ ccc_client_id }}"
           - "-"      # read secret from stdin
         stdin: "{{ ccc_client_secret }}"
@@ -44,7 +44,7 @@
 
           Manual debug:
             python3 {{ playbook_dir }}/../bin/ccc.py token \
-              {{ ccc_url }}/auth/realms/elisity/protocol/openid-connect/token \
+              {{ ccc_base }}/auth/realms/elisity/protocol/openid-connect/token \
               {{ ccc_client_id }} - <<< "{{ ccc_client_secret }}"
       when: token_resp.rc != 0
 
