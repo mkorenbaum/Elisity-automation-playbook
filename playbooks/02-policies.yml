@@ -45,15 +45,20 @@
           Authorization: "Bearer {{ ccc_token }}"
           Accept: application/json
         validate_certs: "{{ ccc_validate_certs }}"
+        return_content: true
         status_code: 200
       register: existing_policies
+
+    - name: Parse existing policies content
+      ansible.builtin.set_fact:
+        existing_policy_content: "{{ (existing_policies.content | from_json).content }}"
 
     - name: Build name→id map of existing policies
       ansible.builtin.set_fact:
         existing_policy_map: >-
-          {{ dict(existing_policies.json.content
+          {{ dict(existing_policy_content
                   | map(attribute='name')
-                  | zip(existing_policies.json.content | map(attribute='id'))) }}
+                  | zip(existing_policy_content | map(attribute='id'))) }}
 
     - name: Create policies that do not exist yet
       ansible.builtin.uri:
@@ -89,16 +94,21 @@
           Authorization: "Bearer {{ ccc_token }}"
           Accept: application/json
         validate_certs: "{{ ccc_validate_certs }}"
+        return_content: true
         status_code: 200
       register: refreshed_policies
+
+    - name: Parse refreshed policies content
+      ansible.builtin.set_fact:
+        refreshed_policy_content: "{{ (refreshed_policies.content | from_json).content }}"
 
     - name: Build final name→id map for our managed policies
       ansible.builtin.set_fact:
         policy_id_map: >-
-          {{ dict(refreshed_policies.json.content
+          {{ dict(refreshed_policy_content
                   | selectattr('name','in', policies | map(attribute='name') | list)
                   | map(attribute='name')
-                  | zip(refreshed_policies.json.content
+                  | zip(refreshed_policy_content
                         | selectattr('name','in', policies | map(attribute='name') | list)
                         | map(attribute='id'))) }}
 

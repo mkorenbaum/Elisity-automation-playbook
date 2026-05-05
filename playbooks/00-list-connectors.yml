@@ -29,12 +29,17 @@
           Authorization: "Bearer {{ ccc_token }}"
           Accept: application/json
         validate_certs: "{{ ccc_validate_certs }}"
+        return_content: true
         status_code: 200
       register: connectors
 
-    - name: "Connector inventory ({{ connectors.json | length }} configured)"
+    - name: Parse connectors response
+      ansible.builtin.set_fact:
+        connectors_list: "{{ connectors.content | from_json }}"
+
+    - name: "Connector inventory ({{ connectors_list | length }} configured)"
       ansible.builtin.debug:
         msg: "  • {{ '%-32s' | format(item.type) }}  status={{ item.status | default('UNKNOWN') }}"
-      loop: "{{ connectors.json }}"
+      loop: "{{ connectors_list }}"
       loop_control:
         label: "{{ item.type }}"

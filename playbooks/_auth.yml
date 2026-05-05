@@ -2,6 +2,12 @@
 # Acquires an OAuth2 client_credentials token from CCC.
 # Registers `ccc_token` for use by subsequent tasks.
 # Imported via `ansible.builtin.import_playbook` — keeps the secret in one place.
+#
+# Implementation note: we deliberately use `return_content: yes` and parse with
+# `from_json` instead of relying on the `uri` module's `.json` attribute. Some
+# Ansible builds don't auto-populate `.json` when Keycloak returns
+# `Content-Type: application/json;charset=UTF-8`. The `from_json` filter is
+# version-stable across ansible-core 2.16+.
 
 - name: "[auth] OAuth client_credentials → access token"
   hosts: local
@@ -20,14 +26,19 @@
           client_secret: "{{ ccc_client_secret }}"
           scope: openid
         validate_certs: "{{ ccc_validate_certs }}"
-        return_content: false
+        return_content: true
         status_code: 200
       register: ccc_auth_response
       no_log: true
 
+    - name: Parse token response
+      ansible.builtin.set_fact:
+        ccc_token_data: "{{ ccc_auth_response.content | from_json }}"
+      no_log: true
+
     - name: Persist token to /tmp for downstream plays
       ansible.builtin.copy:
-        content: "{{ ccc_auth_response.json.access_token }}"
+        content: "{{ ccc_token_data.access_token }}"
         dest: "/tmp/.ccc_token"
         mode: "0600"
       no_log: true
@@ -35,5 +46,5 @@
     - name: "[auth] Authenticated to {{ ccc_url }}"
       ansible.builtin.debug:
         msg:
-          - "Token acquired (expires in {{ ccc_auth_response.json.expires_in }}s)"
+          - "Token acquired (expires in {{ ccc_token_data.expires_in }}s)"
           - "Cached at /tmp/.ccc_token"

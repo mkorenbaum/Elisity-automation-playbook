@@ -30,15 +30,20 @@
           Authorization: "Bearer {{ ccc_token }}"
           Accept: application/json
         validate_certs: "{{ ccc_validate_certs }}"
+        return_content: true
         status_code: 200
       register: existing_pgs
 
     - name: Build name→id map of existing PGs
       ansible.builtin.set_fact:
+        existing_pg_content: "{{ (existing_pgs.content | from_json).content }}"
+
+    - name: Build name→id map of existing PGs (continued)
+      ansible.builtin.set_fact:
         existing_pg_map: >-
-          {{ dict(existing_pgs.json.content
+          {{ dict(existing_pg_content
                   | map(attribute='name')
-                  | zip(existing_pgs.json.content | map(attribute='id'))) }}
+                  | zip(existing_pg_content | map(attribute='id'))) }}
 
     - name: Create Policy Groups that do not exist yet
       ansible.builtin.uri:
@@ -79,16 +84,21 @@
           Authorization: "Bearer {{ ccc_token }}"
           Accept: application/json
         validate_certs: "{{ ccc_validate_certs }}"
+        return_content: true
         status_code: 200
       register: refreshed_pgs
+
+    - name: Parse refreshed PG list
+      ansible.builtin.set_fact:
+        refreshed_pg_content: "{{ (refreshed_pgs.content | from_json).content }}"
 
     - name: Build final name→id map for our managed PGs
       ansible.builtin.set_fact:
         pg_id_map: >-
-          {{ dict(refreshed_pgs.json.content
+          {{ dict(refreshed_pg_content
                   | selectattr('name','in', policy_groups | map(attribute='name') | list)
                   | map(attribute='name')
-                  | zip(refreshed_pgs.json.content
+                  | zip(refreshed_pg_content
                         | selectattr('name','in', policy_groups | map(attribute='name') | list)
                         | map(attribute='id'))) }}
 

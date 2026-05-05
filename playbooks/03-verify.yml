@@ -40,6 +40,7 @@
           Authorization: "Bearer {{ ccc_token }}"
           Accept: application/json
         validate_certs: "{{ ccc_validate_certs }}"
+        return_content: true
         status_code: 200
       loop: "{{ policy_groups }}"
       loop_control:
@@ -49,15 +50,17 @@
     - name: "Policy Group state"
       ansible.builtin.debug:
         msg:
-          - "Name:               {{ item.json.name }}"
-          - "ID:                 {{ item.json.id }}"
-          - "Type:               {{ item.json.policyGroupType }}"
-          - "Security Level:     {{ item.json.securityLevel }}"
-          - "Matched devices:    {{ item.json.assetToPolicyGroupCount | default(0) }} (online: {{ item.json.onlineAssetToPolicyGroupCount | default(0) }})"
-          - "Status:             {{ item.json.status }}"
+          - "Name:               {{ pg.name }}"
+          - "ID:                 {{ pg.id }}"
+          - "Type:               {{ pg.policyGroupType }}"
+          - "Security Level:     {{ pg.securityLevel }}"
+          - "Matched devices:    {{ pg.assetToPolicyGroupCount | default(0) }} (online: {{ pg.onlineAssetToPolicyGroupCount | default(0) }})"
+          - "Status:             {{ pg.status }}"
+      vars:
+        pg: "{{ item.content | from_json }}"
       loop: "{{ pg_fetch.results }}"
       loop_control:
-        label: "{{ item.json.name }}"
+        label: "{{ (item.content | from_json).name }}"
 
     - name: Fetch all policies in target Policy Set
       ansible.builtin.uri:
@@ -67,8 +70,13 @@
           Authorization: "Bearer {{ ccc_token }}"
           Accept: application/json
         validate_certs: "{{ ccc_validate_certs }}"
+        return_content: true
         status_code: 200
       register: all_policies
+
+    - name: Parse all policies content
+      ansible.builtin.set_fact:
+        all_policies_content: "{{ (all_policies.content | from_json).content }}"
 
     - name: "Policy state"
       ansible.builtin.debug:
@@ -80,8 +88,8 @@
           - "SP:          {{ row.finalActionName }}"
           - "Type:        {{ row.policyTypeName | default('?') }}"
       vars:
-        row: "{{ (all_policies.json.content | selectattr('name','equalto', item.name) | list | first) }}"
+        row: "{{ (all_policies_content | selectattr('name','equalto', item.name) | list | first) }}"
       loop: "{{ policies }}"
       loop_control:
         label: "{{ item.name }}"
-      when: (all_policies.json.content | selectattr('name','equalto', item.name) | list | length) > 0
+      when: (all_policies_content | selectattr('name','equalto', item.name) | list | length) > 0
