@@ -1,219 +1,208 @@
-# Elisity — Forrester Wave Q19 demo (Ansible)
+# Elisity Microsegmentation — GitOps Demo
 
-A small Ansible repo that demonstrates Elisity Cloud Control Center being
-driven from outside the UI. Designed to run on a Mac in front of an
-analyst.
+A live, GitHub-hosted demo of Elisity Cloud Control Center being driven
+**entirely from outside the UI**, through every step a real customer's
+DevSecOps pipeline would take: pull request → preview → merge → apply →
+release tag → enforce → continuous drift reconciliation.
 
-The demo answers the Forrester Wave Strategy Q19 prompt:
+Built for analyst demonstrations of Forrester Wave Strategy Q19:
 
-> *"Show an administrative operation initiated from a third-party tool
-> (i.e., outside of the solution's admin console/UI)."*
+> *"To what extent can the provisioning and on-going operation of the
+> solution be automated and orchestrated? How well does it align to
+> modern practices such as DevSecOps and GitOps? To what extent can the
+> solution be integrated with provisioning, automation, orchestration,
+> and/or development pipelines and tooling (e.g., Ansible, Terraform,
+> Argo, Jenkins)?"*
 
-It also exercises the surrounding capabilities — open API, GitOps-style
-policy-as-code, idempotent reapply, and clean teardown.
+## What this demo answers
 
----
+| Sub-question | How the repo answers it |
+|---|---|
+| **Provisioning automation** | `make demo` (or merge a PR) creates Policy Groups + Policies in CCC from declarative YAML. Zero clicks. |
+| **Ongoing operation automation** | Hourly drift check workflow detects out-of-band changes and opens an issue. Self-healing on next merge. |
+| **DevSecOps alignment** | Every change is a PR. Every PR gets an automated impact preview. Branch protection means human review *and* automated simulation before any change reaches CCC. |
+| **GitOps alignment** | Git is source of truth. Merge = deployment. Tag = production promotion. Drift = issue. The same loop GitOps tools (Argo, Flux) provide for Kubernetes — applied to network segmentation. |
+| **Integration breadth** | Same single operation expressed in Ansible (primary), Terraform (parallel module), curl, Python, Argo CD, Jenkins, GitLab CI. None use a proprietary CLI or SDK — every example hits the same open REST API. |
+| **Library size** | The library *is* the API: 436 endpoints across 73 categories. Anything that speaks HTTPS+JSON is a supported client. |
 
-## What it does
+## The 10-minute demo (browser only)
 
-| Step | Playbook | Action |
-|------|----------|--------|
-| 1 | `00-list-connectors.yml` | Authenticates to CCC and lists every configured connector — proof the open API works in both directions |
-| 2 | `01-policy-groups.yml`   | Reads `policy-groups.yaml` and creates each Policy Group as a Dynamic group with classification rules |
-| 3 | `02-policies.yml`        | Reads `policies.yaml` and creates each Policy in **simulation mode** (no enforcement) in the Default Policy Set |
-| 4 | `03-verify.yml`          | Re-fetches everything from CCC and prints the live state |
-| 99| `99-cleanup.yml`         | Deletes every object the demo created. Run between demos. |
+> All of these happen in a browser. No terminal, no SSH, no laptop env
+> setup. The Forrester analyst sees real-world DevSecOps in action.
 
-State (object IDs created during the run) is persisted in `.state.json`
-between plays and used by cleanup so we never delete anything we didn't
-create.
+### 1 — Open a pull request
 
-The "GitOps moment" is the YAML files: `policy-groups.yaml` and
-`policies.yaml` are the source of truth — open them, edit them in front
-of the analyst, re-run `make demo`, switch to the CCC UI, see the
-changes.
+Edit `policies.yaml` to add a new policy. Push to a branch. Open a PR
+against `main`.
 
----
+### 2 — `preview.yml` runs automatically
 
-## Mac setup (one-time, ~2 minutes)
+GitHub Actions:
+- Diffs the PR's YAML against `main`.
+- Posts a sticky comment on the PR:
+  > 🔍 *This PR proposes 1 change. Will create `forrester-demo-pacs`
+  > Policy Group with hostname pattern `PACS`. Mode: `MONITOR_ONLY`.*
 
-```bash
-# 1. Install Homebrew (skip if you already have it)
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+The reviewer sees exactly what the change will do *before* the merge
+button is even available.
 
-# 2. Install Ansible
-brew install ansible
+### 3 — Merge
 
-# 3. Verify
-ansible-playbook --version | head -1
-# Should print:  ansible-playbook [core 2.16.x or newer]
-```
+Branch protection requires the PR review and the preview check to pass.
+Once merged, `apply.yml` runs:
 
-That's it. No pip, no virtualenv, no Python config required.
+- Renders `creds.yml` from repository secrets.
+- Calls `make ci-apply` — the same `make demo` Ansible workflow that
+  runs locally.
+- Posts a comment on the merged PR:
+  > 🚀 *Applied to insights-demo. Created Policy Group `xyz-uuid` and
+  > Policy `abc-uuid` in `MONITOR_ONLY`.*
 
----
+Switch tabs to the CCC UI. The new objects are there.
 
-## Configure the demo (one-time)
+### 4 — Tag a release
 
-```bash
-cd ~/forrester-demo-ansible       # or wherever you unzipped the repo
-cp creds.yml.example creds.yml
-```
+Cut release `v1.2.0`. `promote.yml` runs:
 
-Open `creds.yml` and fill in:
+- Reads `policies.yaml`.
+- For every policy in `MONITOR_ONLY`, PUTs it back as `MONITOR_AND_ENFORCE`.
+- Appends a summary to the GitHub release body.
 
-```yaml
-ccc_url:           "https://your-tenant.elisity.io"
-ccc_client_id:     "<your-api-client-id>"
-ccc_client_secret: "<your-api-client-secret>"
-```
+The release page is now the audit trail of *what was promoted to
+enforcement and when, by whom*. Roll back? Re-tag the previous version
+and re-run the workflow.
 
-`creds.yml` is gitignored — keep secrets out of source control.
+### 5 — Continuous reconciliation
 
-> **zsh users:** the secret contains `!`. Single-quote the value as shown.
-> Inside YAML this is fine; only watch out if you ever paste it onto the
-> shell command line directly.
+`drift-check.yml` runs hourly. If the CCC live state drifts from the
+declared YAML in `main` — somebody changed a policy in the UI, or a PG
+got deleted out-of-band — the workflow opens (or updates) an issue
+titled "🔁 CCC drift detected" with a field-by-field diff. When the
+drift is resolved, the issue closes itself with a comment.
 
----
+### 6 — Tooling tour (15 seconds each)
 
-## Run the demo
+Open these from the GitHub UI to show the analyst that **the integration
+is tooling-agnostic** — Ansible is just one option:
 
-### Full happy path
-```bash
-make demo
-```
-
-That runs all four steps in order and ends with verified state. Switch
-to the CCC UI (`Policies → Policy Sets → Default`) — the new Policy
-Group and Policy will be there.
-
-### Step-by-step (good for an analyst walk-through)
-```bash
-make connectors      # 1. Open API — list every connector
-make policy-groups   # 2. Apply policy-groups.yaml
-make policies        # 3. Apply policies.yaml
-make verify          # 4. Re-read live state from CCC
-```
-
-### Tear down between demos
-```bash
-make cleanup
-```
-
-### List all targets
-```bash
-make
-```
-
----
-
-## What the analyst should see
-
-1. **Connectors output** lists every connector configured on the tenant
-   (Claroty, Armis, CrowdStrike, Defender, ServiceNow, Tenable,
-   Microsoft Intune, NetBox, Nozomi, Dragos, Palo Alto, ORDR,
-   SentinelOne, SureMDM, plus a Custom Connector). This proves the
-   inbound REST API works.
-
-2. **Policy Group create** creates `forrester-demo-imaging` as a
-   Dynamic group classified by hostname pattern. The analyst can refresh
-   the CCC UI and see it with security level SL-3, the description that
-   came from `policy-groups.yaml`, and the live "matched devices" count.
-
-3. **Policy create** creates an allow-all policy from the new group to
-   `Unverified Servers Storage` in **simulation mode**. The analyst
-   sees a real, evaluable policy — without the risk of an enforcement
-   action because `monitorMode: MONITOR_ONLY`.
-
-4. **Verify output** prints live state (IDs, names, types) re-read from
-   CCC, so the analyst sees the round-trip succeed end-to-end.
-
-5. **Source of truth is YAML.** Open `policy-groups.yaml` in front of
-   the analyst — change the description, change the hostname pattern,
-   add a second Policy Group entry. Run `make policy-groups` again.
-   That's GitOps for segmentation.
-
----
-
-## What's deliberately scoped out
-
-This is an analyst demo, not a production deployment harness:
-
-- **Update / drift reconciliation** — playbooks are create-if-missing.
-  To change a description you currently `make cleanup` then `make demo`.
-  Production-grade Ansible would do PUT-with-diff on every run.
-- **Vault / secret management** — `creds.yml` is plaintext. Production
-  runs would use `ansible-vault` or pull from a secret store.
-- **Multi-tenant** — single CCC URL hard-coded in `creds.yml`.
-
-The same code paths used here scale to the full topology (Sites → DZs →
-VE Groups → VEs → VENs) and to bulk policy operations against the same
-REST API. None of this requires a proprietary CLI or SDK.
+- [`terraform/`](terraform/) — Same operation as a parallel Terraform
+  module using the Mastercard/restapi provider.
+- [`examples/curl-one-liner.sh`](examples/curl-one-liner.sh) — The
+  thinnest possible client: 4 lines of shell.
+- [`examples/python-direct.py`](examples/python-direct.py) — Pure stdlib
+  Python (no SDK, no requests).
+- [`examples/argocd-application.yaml`](examples/argocd-application.yaml) —
+  Argo CD Application + Job hook.
+- [`examples/Jenkinsfile`](examples/Jenkinsfile) — Declarative Jenkins
+  pipeline using the same `make ci-*` targets.
+- [`examples/.gitlab-ci.yml`](examples/.gitlab-ci.yml) — GitLab CI
+  mirror of the GitHub Actions workflows.
 
 ---
 
 ## Repo layout
 
 ```
-forrester-demo-ansible/
-├── README.md                      ← you are here
-├── Makefile                       ← `make demo` / `make cleanup` / etc.
-├── ansible.cfg
-├── creds.yml.example              ← copy to creds.yml
-├── policy-groups.yaml             ← Git-tracked PG definitions
-├── policies.yaml                  ← Git-tracked Policy definitions
-├── inventory/
-│   ├── hosts.ini                  ← runs everything on localhost
-│   └── group_vars/all.yml         ← tenant-specific IDs (PG, PS, SP)
-└── playbooks/
-    ├── _auth.yml                  ← OAuth client_credentials flow
-    ├── 00-list-connectors.yml
-    ├── 01-policy-groups.yml
-    ├── 02-policies.yml
-    ├── 03-verify.yml
-    └── 99-cleanup.yml
+.
+├── README.md                       ← you are here
+├── Makefile                        ← contract: make demo / make ci-apply / make cleanup / …
+├── creds.yml.example
+├── policy-groups.yaml              ← declarative Policy Groups (source of truth)
+├── policies.yaml                   ← declarative Policies (source of truth)
+├── inventory/group_vars/all.yml    ← tenant-specific IDs + URL normalization
+├── playbooks/
+│   ├── _auth.yml                   ← OAuth client_credentials → /tmp/.ccc_token
+│   ├── 00-list-connectors.yml      ← read-only proof of life
+│   ├── 01-policy-groups.yml        ← apply policy-groups.yaml
+│   ├── 02-policies.yml             ← apply policies.yaml
+│   ├── 03-verify.yml               ← re-fetch live state
+│   └── 99-cleanup.yml              ← teardown
+├── bin/
+│   ├── ccc.py                      ← Python stdlib HTTP helper (urllib + json)
+│   ├── preview.py                  ← PR preview report
+│   ├── promote.py                  ← MONITOR_ONLY → MONITOR_AND_ENFORCE
+│   └── drift.py                    ← live state vs main YAML diff
+├── .github/workflows/
+│   ├── preview.yml                 ← runs on PR
+│   ├── apply.yml                   ← runs on push to main
+│   ├── promote.yml                 ← runs on release published
+│   └── drift-check.yml             ← runs hourly
+├── terraform/                      ← parallel IaC implementation
+└── examples/                       ← curl, python, argo, jenkins, gitlab-ci
 ```
 
 ---
 
-## Troubleshooting
+## Local development (Mac)
 
-### `ansible-playbook: command not found`
-Install Ansible: `brew install ansible`
+For development against the same flow CI runs:
 
-### `Error: 'ccc_validate_certs' is undefined`
-You're running plays from the wrong directory. Run from the repo root:
-`cd ~/forrester-demo-ansible && make demo`.
+```bash
+brew install ansible
 
-### 401 from the token endpoint
-- `creds.yml` has the wrong client ID / secret.
-- The secret has special chars and was shell-mangled. Make sure the
-  value in `creds.yml` is wrapped in double quotes.
+cp creds.yml.example creds.yml
+# edit creds.yml with CCC URL / client id / secret
 
-### `Policy name "..." has different format than expected.`
-Policy names follow the pattern `<source-PG-name> > <destination-PG-name>`
-when `isCustomName: false`. If you change the PG name in
-`policy-groups.yaml`, also update the policy name in `policies.yaml` to
-match.
+make demo        # the analyst-facing run
+make cleanup     # tear down between demos
+```
 
-### Demo objects didn't get cleaned up
-Run `make cleanup`. If the `.state.json` file was deleted, you can also
-clean up by hand from the CCC UI — every demo object is prefixed
-`forrester-demo-`.
+`creds.yml` is git-ignored. The trailing slash on `ccc_url` is fine —
+the playbooks normalize it via the `ccc_base` fact in
+`inventory/group_vars/all.yml`.
 
 ---
 
-## How to re-target a different CCC tenant
+## Required GitHub configuration
 
-The IDs in `inventory/group_vars/all.yml` (destination Policy Group,
-Policy Set, Security Profile, default label) are tenant-specific. To
-point at a different tenant:
+For the four workflows to run against your tenant, the repo must have:
 
-1. Update `creds.yml` with the new CCC URL + API client.
-2. Pick equivalent objects in the new tenant — any existing PG, the
-   Default Policy Set, the built-in Allow All security profile, the
-   default PG label.
-3. Replace the four IDs in `inventory/group_vars/all.yml`.
+### Repository secrets (`Settings → Secrets and variables → Actions`)
 
-A `discover` task that pulls those IDs automatically would be a
-straightforward extension if Mike wants it.
+- `CCC_URL` — Cloud Control Center base URL (e.g., `https://insights-demo.idp01.elisity.io`)
+- `CCC_CLIENT_ID` — OAuth2 service-account client ID
+- `CCC_CLIENT_SECRET` — OAuth2 service-account client secret
+
+### Environment (`Settings → Environments → New environment`)
+
+Create one named **`insights-demo`**. Optionally add a required reviewer
+to gate `apply.yml` / `promote.yml` runs on a human approval. The same
+secrets above can be scoped to the environment for tighter blast radius.
+
+### Branch protection (`Settings → Branches → main`)
+
+- Require a pull request before merging.
+- Require status check `preview` to pass.
+- Optionally require a CODEOWNER review for `policies.yaml` /
+  `policy-groups.yaml`.
+
+---
+
+## Why this is the right shape for the question
+
+The Forrester prompt is multi-part — Provisioning, Operation, DevSecOps,
+GitOps, Integration breadth, Library size. A single `curl` command (the
+literal "show an admin operation from a third-party tool" demo) only
+answers two of those.
+
+This repo answers all six in one ~10-minute live walkthrough, using
+GitHub as the only surface and Elisity's open API as the substrate.
+Every demo step maps to the same loop a customer would run on their
+real production fleet — there's nothing show-only here.
+
+---
+
+## What's intentionally scoped out
+
+- Policy *updates*: workflows create-if-missing today. Production-grade
+  reconciliation (PUT-with-diff on every reapply) is one Ansible task
+  away — same REST API, same auth.
+- Multi-environment promotion (dev/staging/prod tenants): single tenant
+  for clarity. The pattern extends with workflow matrix + per-env
+  secrets.
+- Native Terraform provider: examples use the generic
+  `Mastercard/restapi` provider against Elisity's REST API. A purpose-built
+  `provider-elisity` would be a productization, not a demo concern.
+
+The plumbing under the demo (`bin/ccc.py`) talks to 436 CCC endpoints
+without modification — every other capability is API-callable today.

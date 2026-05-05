@@ -1,0 +1,79 @@
+// Jenkins declarative pipeline for the Elisity GitOps demo.
+//
+// Maps the same three lifecycle events as the GitHub Actions workflows:
+//   PR build       → preview (read-only diff + comment on PR)
+//   merge to main  → apply (create in MONITOR_ONLY)
+//   tag vX.Y.Z     → promote (flip to MONITOR_AND_ENFORCE)
+//
+// The Jenkinsfile is a thin orchestration layer over the same `make ci-*`
+// targets the GitHub workflows use — no logic duplicated.
+
+pipeline {
+  agent {
+    docker {
+      image 'python:3.12-slim'
+      args '-u root'
+    }
+  }
+
+  environment {
+    CCC_URL           = credentials('elisity-ccc-url')
+    CCC_CLIENT_ID     = credentials('elisity-ccc-client-id')
+    CCC_CLIENT_SECRET = credentials('elisity-ccc-client-secret')
+  }
+
+  options {
+    timeout(time: 10, unit: 'MINUTES')
+    disableConcurrentBuilds()       // serialize against the live tenant
+  }
+
+  stages {
+
+    stage('Setup') {
+      steps {
+        sh '''
+          apt-get update -qq && apt-get install -qq -y make git
+          pip install --quiet ansible PyYAML
+          make ci-creds
+        '''
+      }
+    }
+
+    stage('Preview (PR)') {
+      when { changeRequest() }
+      steps {
+        sh 'make ci-preview > preview.md'
+        // Post the preview to the PR via the GitHub Branch Source plugin
+        publishChecks name: 'Elisity Preview',
+                      title: 'Policy preview',
+                      summary: readFile('preview.md')
+      }
+    }
+
+    stage('Apply (main)') {
+      when { branch 'main' }
+      steps {
+        sh 'make ci-apply'
+      }
+    }
+
+    stage('Promote (tag)') {
+      when { buildingTag() }
+      steps {
+        sh 'make ci-promote'
+      }
+    }
+  }
+
+  post {
+    always {
+      // Emit a summary to the build page
+      script {
+        def summary = sh(script: 'cat /tmp/preview.md /tmp/promote.md 2>/dev/null || true', returnStdout: true).trim()
+        if (summary) {
+          currentBuild.description = summary.take(500)
+        }
+      }
+    }
+  }
+}

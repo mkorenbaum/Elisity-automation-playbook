@@ -1,0 +1,69 @@
+# Argo CD Application that syncs this repo's policy YAML to a CCC
+# tenant on every commit to main.
+#
+# Strategy: Argo doesn't natively understand "Elisity Policy Group" —
+# but it understands Kubernetes Jobs perfectly. So we wrap `make
+# ci-apply` in a Job and use Argo's PreSync / Sync hook to invoke it.
+# Every successful sync = the Job ran cleanly = CCC is in sync with Git.
+#
+# Same pattern works for any non-Kubernetes target (Cloudflare, Stripe,
+# Datadog, etc.) — Argo's Sync Wave + Hook semantics let it manage
+# external state through Job side-effects.
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: elisity-policy
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/mkorenbaum/Elisity-automation-playbook
+    targetRevision: main
+    path: examples/argocd-job
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: elisity-ops
+  syncPolicy:
+    automated:
+      prune: false        # don't auto-delete CCC objects from Argo
+      selfHeal: true       # re-run on drift
+    syncOptions:
+      - CreateNamespace=true
+---
+# The Job Argo runs each sync. Its only job is to call `make ci-apply`
+# inside a container that has the repo + python3 + ansible.
+#
+# (For the Forrester demo we keep this as documentation — the GitHub
+# Actions `apply.yml` workflow already does the same thing without
+# needing a Kubernetes cluster.)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: elisity-apply
+  namespace: elisity-ops
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: apply
+          image: ghcr.io/elisity/automation-runner:latest    # any image with ansible+python+make
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              git clone --depth 1 https://github.com/mkorenbaum/Elisity-automation-playbook /repo
+              cd /repo
+              make ci-apply
+          env:
+            - name: CCC_URL
+              valueFrom: { secretKeyRef: { name: elisity-ccc, key: url } }
+            - name: CCC_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: elisity-ccc, key: client_id } }
+            - name: CCC_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: elisity-ccc, key: client_secret } }
