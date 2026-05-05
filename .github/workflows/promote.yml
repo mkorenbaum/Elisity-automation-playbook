@@ -1,0 +1,65 @@
+name: Promote to enforcement
+
+# Runs on every published release. Flips every policy declared in
+# policies.yaml from MONITOR_ONLY to MONITOR_AND_ENFORCE.
+#
+# This is the "tag = production" GitOps moment for the analyst demo:
+# `vX.Y.Z` becomes the audit trail of what was promoted to enforcement
+# and when.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Manual promotion reason (audit trail)'
+        required: false
+        default: 'Manual promotion via workflow_dispatch'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ccc-apply       # serialize against apply.yml — never both at once
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: insights-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet PyYAML
+
+      - name: Promote MONITOR_ONLY → MONITOR_AND_ENFORCE
+        env:
+          CCC_URL: ${{ secrets.CCC_URL }}
+          CCC_CLIENT_ID: ${{ secrets.CCC_CLIENT_ID }}
+          CCC_CLIENT_SECRET: ${{ secrets.CCC_CLIENT_SECRET }}
+        run: |
+          make ci-creds
+          python3 bin/promote.py | tee /tmp/promote.md
+
+      - name: Comment on the release
+        if: github.event_name == 'release'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/promote.md', 'utf8');
+            await github.rest.repos.createReleaseAsset || null;
+            // Append the promotion summary to the release body
+            const release = context.payload.release;
+            const newBody = `${release.body || ''}\n\n---\n${body}`;
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              body: newBody,
+            });

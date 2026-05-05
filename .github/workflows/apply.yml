@@ -1,0 +1,99 @@
+name: Apply to CCC
+
+# Runs on every push to main that touches policy YAML. Applies the
+# declared state to the live CCC tenant in MONITOR_ONLY (simulation)
+# mode. New policies do NOT enforce until a release tag is published
+# (see promote.yml).
+#
+# The "merge IS the deployment" moment for the analyst demo.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'policy-groups.yaml'
+      - 'policies.yaml'
+      - 'inventory/group_vars/all.yml'
+      - 'playbooks/**'
+      - 'bin/**'
+      - '.github/workflows/apply.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ccc-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: insights-demo   # protects the secret + provides the audit trail
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # enough to resolve the merge commit's PR
+
+      - name: Set up Python + Ansible
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet ansible PyYAML
+
+      - name: Apply YAML to CCC
+        env:
+          CCC_URL: ${{ secrets.CCC_URL }}
+          CCC_CLIENT_ID: ${{ secrets.CCC_CLIENT_ID }}
+          CCC_CLIENT_SECRET: ${{ secrets.CCC_CLIENT_SECRET }}
+        run: |
+          make ci-creds
+          make ci-apply 2>&1 | tee /tmp/apply.log
+
+      - name: Build apply summary
+        if: always()
+        run: |
+          {
+            echo "## 🚀 Applied to Elisity (\`MONITOR_ONLY\`)"
+            echo
+            echo "Source-of-truth this run:  \`${{ github.sha }}\`"
+            echo "Tenant: \`${{ secrets.CCC_URL }}\`"
+            echo
+            echo "<details><summary>Apply log (last 80 lines)</summary>"
+            echo
+            echo '```'
+            tail -80 /tmp/apply.log || true
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "**Next step in the GitOps pipeline:** cut a release tag "
+            echo "(\`vX.Y.Z\`) to promote these policies to "
+            echo "\`MONITOR_AND_ENFORCE\`."
+          } > /tmp/apply-comment.md
+          cat /tmp/apply-comment.md
+
+      - name: Find related PR
+        if: always()
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.sha;
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: sha,
+            });
+            return prs.length > 0 ? prs[0].number : 0;
+          result-encoding: string
+
+      - name: Comment on PR (if push was a merge)
+        if: always() && steps.pr.outputs.result != '0' && steps.pr.outputs.result != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          number: ${{ steps.pr.outputs.result }}
+          header: elisity-apply
+          path: /tmp/apply-comment.md

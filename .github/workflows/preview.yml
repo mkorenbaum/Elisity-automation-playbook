@@ -1,0 +1,63 @@
+name: PR Preview
+
+# Runs on every PR that touches policy YAML. Diffs the PR's intended state
+# against main, queries CCC for impact context, and posts (or updates) a
+# single comment on the PR with the result.
+#
+# This is the "DevSecOps gate" for the analyst demo: every change is
+# previewed automatically before a human merges.
+
+on:
+  pull_request:
+    paths:
+      - 'policy-groups.yaml'
+      - 'policies.yaml'
+      - 'inventory/group_vars/all.yml'
+      - 'bin/**'
+      - 'playbooks/**'
+      - '.github/workflows/preview.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          # Fetch enough history that we can `git show origin/main:...`
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip install --quiet PyYAML
+
+      - name: Generate preview report
+        env:
+          CCC_URL: ${{ secrets.CCC_URL }}
+          CCC_CLIENT_ID: ${{ secrets.CCC_CLIENT_ID }}
+          CCC_CLIENT_SECRET: ${{ secrets.CCC_CLIENT_SECRET }}
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          # Render creds.yml from secrets so preview.py can authenticate
+          # to CCC for impact context. preview.py degrades gracefully if
+          # creds are missing.
+          if [ -n "$CCC_URL" ]; then
+            make ci-creds
+          fi
+          python3 bin/preview.py --base-ref "$BASE_REF" > /tmp/preview.md
+          cat /tmp/preview.md
+
+      - name: Comment on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: elisity-preview
+          path: /tmp/preview.md

@@ -1,0 +1,100 @@
+name: Drift Check
+
+# Hourly reconciliation: compare CCC live state against this repo's main
+# branch. If they diverge — somebody changed something in the CCC UI
+# without a PR — open or update a GitHub issue with the diff. If they're
+# in sync, close any open drift issue.
+#
+# This is the "continuous reconciliation" moment for the analyst demo —
+# the same loop GitOps tools (Argo CD, Flux) provide for Kubernetes,
+# applied to network segmentation policy.
+
+on:
+  schedule:
+    - cron: '17 * * * *'   # hourly at :17
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ccc-drift
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: insights-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install --quiet PyYAML
+
+      - name: Run drift check
+        id: drift
+        env:
+          CCC_URL: ${{ secrets.CCC_URL }}
+          CCC_CLIENT_ID: ${{ secrets.CCC_CLIENT_ID }}
+          CCC_CLIENT_SECRET: ${{ secrets.CCC_CLIENT_SECRET }}
+        run: |
+          make ci-creds
+          set +e
+          python3 bin/drift.py > /tmp/drift.md
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          cat /tmp/drift.md
+
+      - name: Manage drift issue
+        uses: actions/github-script@v7
+        env:
+          DRIFT_RC: ${{ steps.drift.outputs.rc }}
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/drift.md', 'utf8');
+            const drifted = process.env.DRIFT_RC !== '0';
+            const title = '🔁 CCC drift detected';
+
+            // Find existing open drift issue
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'drift',
+              per_page: 100,
+            });
+            const existing = issues.find(i => i.title === title);
+
+            if (drifted) {
+              if (existing) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: existing.number, body,
+                });
+                console.log(`Updated drift issue #${existing.number}`);
+              } else {
+                const { data: created } = await github.rest.issues.create({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  title, body, labels: ['drift'],
+                });
+                console.log(`Opened drift issue #${created.number}`);
+              }
+            } else if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number,
+                body: '✅ Drift cleared — repo and CCC are back in sync. Closing.',
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, state: 'closed',
+              });
+              console.log(`Closed drift issue #${existing.number}`);
+            } else {
+              console.log('No drift, no existing issue. Nothing to do.');
+            }
