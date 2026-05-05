@@ -37,18 +37,14 @@
       ansible.builtin.set_fact:
         state: "{{ state_blob.content | b64decode | from_json }}"
 
-    - name: List existing policies in target Policy Set (curl GET)
+    - name: List existing policies in target Policy Set
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Accept: application/json"
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --token
+          - "{{ ccc_token }}"
           - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
       register: existing_policies_resp
       changed_when: false
@@ -64,25 +60,11 @@
                   | map(attribute='name')
                   | zip(existing_policy_content | map(attribute='id'))) }}
 
-    - name: Create policies that do not exist yet (curl POST)
-      ansible.builtin.command:
-        argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --request
-          - POST
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Content-Type: application/json"
-          - --header
-          - "Accept: application/json"
-          - --data
-          - "{{ policy_body | to_json }}"
-          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies"
+    - name: Stage policy create payloads to /tmp
+      ansible.builtin.copy:
+        content: "{{ policy_body | to_nice_json }}"
+        dest: "/tmp/.policy-{{ item.name | regex_replace('[^a-zA-Z0-9]+','-') }}.json"
+        mode: "0600"
       vars:
         policy_body:
           name: "{{ item.name }}"
@@ -94,24 +76,38 @@
           monitorMode: "{{ item.monitor_mode }}"
           isMirrored: "{{ item.mirrored }}"
           isCustomName: false
+      loop: "{{ policies }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.name not in existing_policy_map
+
+    - name: Create policies that do not exist yet
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --method
+          - POST
+          - --token
+          - "{{ ccc_token }}"
+          - --body-file
+          - "/tmp/.policy-{{ item.name | regex_replace('[^a-zA-Z0-9]+','-') }}.json"
+          - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies"
       when: item.name not in existing_policy_map
       loop: "{{ policies }}"
       loop_control:
         label: "{{ item.name }}"
       changed_when: true
 
-    - name: Re-list policies to capture new IDs (curl GET)
+    - name: Re-list policies to capture new IDs
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Accept: application/json"
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --token
+          - "{{ ccc_token }}"
           - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
       register: refreshed_policies_resp
       changed_when: false
@@ -135,6 +131,14 @@
         content: "{{ {'policy_groups': state.policy_groups, 'policies': policy_id_map} | to_nice_json }}"
         dest: "{{ state_file }}"
         mode: "0644"
+
+    - name: Clean up staged payload files
+      ansible.builtin.file:
+        path: "/tmp/.policy-{{ item.name | regex_replace('[^a-zA-Z0-9]+','-') }}.json"
+        state: absent
+      loop: "{{ policies }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     - name: "Policies in state"
       ansible.builtin.debug:

@@ -32,18 +32,14 @@
       ansible.builtin.set_fact:
         state: "{{ state_blob.content | b64decode | from_json }}"
 
-    - name: Fetch each created Policy Group (curl GET)
+    - name: Fetch each created Policy Group
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Accept: application/json"
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --token
+          - "{{ ccc_token }}"
           - "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
       loop: "{{ policy_groups }}"
       loop_control:
@@ -66,18 +62,14 @@
       loop_control:
         label: "{{ (item.stdout | from_json).name }}"
 
-    - name: Fetch all policies in target Policy Set (curl GET)
+    - name: Fetch all policies in target Policy Set
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Accept: application/json"
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --token
+          - "{{ ccc_token }}"
           - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies?size=1000"
       register: all_policies_resp
       changed_when: false

@@ -34,21 +34,18 @@
         state: "{{ state_blob.content | b64decode | from_json }}"
       when: state_blob is succeeded
 
-    - name: Delete demo policies (curl DELETE)
+    - name: Delete demo policies
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --request
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --method
           - DELETE
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --output
-          - /dev/null
-          - --write-out
-          - "%{http_code}"
+          - --token
+          - "{{ ccc_token }}"
+          - --accept-status
+          - "200,204,404"
           - "{{ ccc_url }}/api/policy/v1/policy-sets/{{ ccc_policy_set_id }}/policies/{{ state.policies[item.name] }}"
       loop: "{{ policies }}"
       loop_control:
@@ -59,21 +56,18 @@
         - item.name in state.policies
       changed_when: true
 
-    - name: Delete demo policy groups (curl DELETE)
+    - name: Delete demo policy groups
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --request
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --method
           - DELETE
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --output
-          - /dev/null
-          - --write-out
-          - "%{http_code}"
+          - --token
+          - "{{ ccc_token }}"
+          - --accept-status
+          - "200,204,404"
           - "{{ ccc_url }}/api/policy/v2/policy-groups/{{ state.policy_groups[item.name] }}"
       loop: "{{ policy_groups }}"
       loop_control:

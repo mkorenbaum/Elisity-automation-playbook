@@ -22,18 +22,14 @@
         ccc_token: "{{ token_blob.content | b64decode }}"
       no_log: true
 
-    - name: List existing Policy Groups (curl GET)
+    - name: List existing Policy Groups
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Accept: application/json"
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --token
+          - "{{ ccc_token }}"
           - "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
       register: existing_pgs_resp
       changed_when: false
@@ -49,25 +45,11 @@
                   | map(attribute='name')
                   | zip(existing_pg_content | map(attribute='id'))) }}
 
-    - name: Create Policy Groups that do not exist yet (curl POST)
-      ansible.builtin.command:
-        argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --request
-          - POST
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Content-Type: application/json"
-          - --header
-          - "Accept: application/json"
-          - --data
-          - "{{ pg_body | to_json }}"
-          - "{{ ccc_url }}/api/policy/v2/policy-groups/dynamic"
+    - name: Stage PG create payloads to /tmp
+      ansible.builtin.copy:
+        content: "{{ pg_body | to_nice_json }}"
+        dest: "/tmp/.pg-{{ item.name }}.json"
+        mode: "0600"
       vars:
         pg_body:
           name: "{{ item.name }}"
@@ -84,24 +66,38 @@
                     attributeFqdn: "{{ item.match.attribute }}"
                     attributeType: STRING
                     value: "{{ item.match.match_values }}"
+      loop: "{{ policy_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.name not in existing_pg_map
+
+    - name: Create Policy Groups that do not exist yet
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --method
+          - POST
+          - --token
+          - "{{ ccc_token }}"
+          - --body-file
+          - "/tmp/.pg-{{ item.name }}.json"
+          - "{{ ccc_url }}/api/policy/v2/policy-groups/dynamic"
       when: item.name not in existing_pg_map
       loop: "{{ policy_groups }}"
       loop_control:
         label: "{{ item.name }}"
       changed_when: true
 
-    - name: Re-list Policy Groups to capture new IDs (curl GET)
+    - name: Re-list Policy Groups to capture new IDs
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Accept: application/json"
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --token
+          - "{{ ccc_token }}"
           - "{{ ccc_url }}/api/policy/v2/policy-groups?size=500"
       register: refreshed_pgs_resp
       changed_when: false
@@ -125,6 +121,14 @@
         content: "{{ {'policy_groups': pg_id_map} | to_nice_json }}"
         dest: "{{ state_file }}"
         mode: "0644"
+
+    - name: Clean up staged payload files
+      ansible.builtin.file:
+        path: "/tmp/.pg-{{ item.name }}.json"
+        state: absent
+      loop: "{{ policy_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
 
     - name: "Policy Groups in state"
       ansible.builtin.debug:

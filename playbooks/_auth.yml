@@ -2,13 +2,14 @@
 # Acquires an OAuth2 client_credentials token from CCC.
 # Caches the bare token at /tmp/.ccc_token for downstream plays.
 #
-# Implementation note: we deliberately use curl via the command module
-# instead of ansible.builtin.uri. The uri module's response handling
-# (.json, .content) varies enough across Ansible builds — and especially
-# between macOS and Linux — that we hit silent empty-content responses.
-# curl is on every modern Mac and behaves identically across systems,
-# and it makes the demo more transparent: the analyst literally sees a
-# REST API call happen against CCC.
+# Implementation: every CCC API interaction is delegated to bin/ccc.py,
+# a 100-line Python 3 stdlib helper. We hit two reliability problems
+# trying to do the HTTP from Ansible directly: the `uri` module's
+# response decoding varies across builds (especially on macOS Ansible
+# 2.20.5 returning empty content), and `curl --silent` via the `command`
+# module produced empty stdout the same way. The Python script uses
+# urllib + json + ssl with explicit decoding — identical behavior on
+# macOS, Linux, anything with python3.
 
 - name: "[auth] OAuth client_credentials → access token"
   hosts: local
@@ -16,44 +17,32 @@
   vars_files:
     - ../creds.yml
   tasks:
-    - name: Verify curl is available
-      ansible.builtin.command: curl --version
-      register: curl_check
+    - name: Verify python3 is available
+      ansible.builtin.command: python3 --version
+      register: py_check
       changed_when: false
-      failed_when: curl_check.rc != 0
+      failed_when: py_check.rc != 0
 
-    - name: Acquire access token via curl
+    - name: Acquire access token via bin/ccc.py
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --request
-          - POST
-          - --data-urlencode
-          - grant_type=client_credentials
-          - --data-urlencode
-          - "client_id={{ ccc_client_id }}"
-          - --data-urlencode
-          - "client_secret={{ ccc_client_secret }}"
-          - --data-urlencode
-          - scope=openid
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - token
           - "{{ ccc_url }}/auth/realms/elisity/protocol/openid-connect/token"
+          - "{{ ccc_client_id }}"
+          - "{{ ccc_client_secret }}"
       register: token_resp
       no_log: true
       changed_when: false
 
-    - name: Cache bare token at /tmp/.ccc_token
+    - name: Cache token at /tmp/.ccc_token
       ansible.builtin.copy:
-        content: "{{ (token_resp.stdout | from_json).access_token }}"
+        content: "{{ token_resp.stdout | trim }}"
         dest: /tmp/.ccc_token
         mode: "0600"
       no_log: true
 
     - name: "[auth] Authenticated to {{ ccc_url }}"
       ansible.builtin.debug:
-        msg:
-          - "Token acquired (expires in {{ (token_resp.stdout | from_json).expires_in }}s)"
-          - "Cached at /tmp/.ccc_token"
+        msg: "Token acquired ({{ (token_resp.stdout | trim | length) }} chars), cached at /tmp/.ccc_token"

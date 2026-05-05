@@ -24,15 +24,11 @@
     - name: GET /api/identity-graph/v1/connector-connectivity
       ansible.builtin.command:
         argv:
-          - curl
-          - --silent
-          - --show-error
-          - --fail
-          - "{{ '--insecure' if not ccc_validate_certs else '--verbose' }}"
-          - --header
-          - "Authorization: Bearer {{ ccc_token }}"
-          - --header
-          - "Accept: application/json"
+          - python3
+          - "{{ playbook_dir }}/../bin/ccc.py"
+          - call
+          - --token
+          - "{{ ccc_token }}"
           - "{{ ccc_url }}/api/identity-graph/v1/connector-connectivity"
       register: connectors_resp
       changed_when: false
