@@ -18,3 +18,15 @@ policy_groups:
       operator: CONTAINS
       match_values:
         - IMAGING
+  - name: forrester-demo-pacs
+  description: |
+    PACS imaging archive workstations classified by hostname pattern.
+    Added via PR to demonstrate the GitOps preview gate.
+  type: DYNAMIC
+  security_level: 3
+  auto_lock_devices: false
+  match:
+    attribute: core.hostname
+    operator: CONTAINS
+    match_values:
+      - PACS
