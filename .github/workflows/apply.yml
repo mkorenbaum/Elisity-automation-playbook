@@ -29,7 +29,10 @@ concurrency:
 
 jobs:
   apply:
-    runs-on: ubuntu-latest
+    # Self-hosted: insights-demo lives on Elisity's internal network and
+    # is unreachable from GitHub's public-IP runners. The runner installed
+    # on Mike's lab host (10.0.0.175) routes to the tenant directly.
+    runs-on: self-hosted
     timeout-minutes: 10
     environment: insights-demo   # protects the secret + provides the audit trail
     steps:
@@ -37,11 +40,11 @@ jobs:
         with:
           fetch-depth: 2   # enough to resolve the merge commit's PR
 
-      - name: Set up Python + Ansible
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install --quiet ansible PyYAML
+      - name: Ensure ansible + PyYAML are installed
+        run: |
+          python3 -m venv /tmp/forrester-venv 2>/dev/null || true
+          /tmp/forrester-venv/bin/pip install --quiet --upgrade ansible PyYAML
+          echo "/tmp/forrester-venv/bin" >> "$GITHUB_PATH"
 
       - name: Apply YAML to CCC
         env:

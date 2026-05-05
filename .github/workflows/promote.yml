@@ -26,16 +26,19 @@ concurrency:
 
 jobs:
   promote:
-    runs-on: ubuntu-latest
+    # Self-hosted: see apply.yml for rationale (insights-demo not reachable
+    # from GitHub-hosted runners).
+    runs-on: self-hosted
     timeout-minutes: 5
     environment: insights-demo
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install --quiet PyYAML
+      - name: Ensure PyYAML is installed
+        run: |
+          python3 -m venv /tmp/forrester-venv 2>/dev/null || true
+          /tmp/forrester-venv/bin/pip install --quiet --upgrade PyYAML
+          echo "/tmp/forrester-venv/bin" >> "$GITHUB_PATH"
 
       - name: Promote MONITOR_ONLY → MONITOR_AND_ENFORCE
         env:
