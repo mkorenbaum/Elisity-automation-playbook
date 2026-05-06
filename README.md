@@ -1,10 +1,10 @@
-# Elisity Microsegmentation: GitOps Lifecycle Demo (v2)
+# Elisity Microsegmentation: GitOps Lifecycle Demo
 
 Declarative healthcare microsegmentation for the Elisity `insights-demo`
 tenant, Hospital site. Four YAML files define 8 Policy Groups, 36 Policies,
-8 Security Profiles, and a dedicated Policy Set. Six replayable lifecycle
-scenarios demonstrate the full GitOps loop: bootstrap, add, update, profile
-swap, site scope, revert.
+6 custom Security Profiles, and a dedicated Policy Set. Six replayable
+lifecycle scenarios demonstrate the full GitOps loop: bootstrap, add, update,
+profile swap, site scope, revert.
 
 Built for analyst demonstrations of Forrester Wave Strategy Q19:
 
@@ -39,15 +39,15 @@ The demo replays six named lifecycle scenarios, each independently triggerable:
 1. **Bootstrap** the policy set, PG label, and security profiles from scratch
 2. **Add** a new multi-source Policy Group via PR
 3. **Update** match criteria on an existing Policy Group via PR
-4. **Swap** a security profile on a policy via PR
+4. **Attach** a security profile to a policy via PR
 5. **Scope** VE-to-site assignment as declarative config
 6. **Revert** and clean up, proving pre-existing tenant objects are untouched
 
-Safety is structural, not procedural. Three independent guards (PG label, name
-prefix, policy set boundary) ensure that reconciliation only touches demo
-objects. Pre-existing Policy Groups in the tenant carry none of these markers
-and are never candidates for modification or deletion. See
-[Safety story](#safety-story) for the full breakdown.
+Safety is structural, not procedural. Three independent guards (PG label,
+SP name prefix, policy set boundary) ensure that reconciliation only touches
+demo objects. Pre-existing Policy Groups in the tenant (including all CORK
+content) carry none of these markers and are never candidates for modification
+or deletion. See [Safety story](#safety-story) for the full breakdown.
 
 ---
 
@@ -58,7 +58,7 @@ and are never candidates for modification or deletion. See
 |  Git Repository (source of truth)                               |
 |                                                                 |
 |  policy-set.yaml ---------- Policy Set + PG label + site scope  |
-|  security-profiles.yaml --- 8 L4 security profiles              |
+|  security-profiles.yaml --- 6 custom L4 security profiles       |
 |  policy-groups.yaml ------- 8 Policy Groups (match criteria)    |
 |  policies.yaml ------------ 36 Policies (8x8 matrix)           |
 +--------------------------+--------------------------------------+
@@ -82,32 +82,32 @@ and are never candidates for modification or deletion. See
 +-----------------------------------------------------------------+
 ```
 
-### Six declarative object layers
+### Declarative object layers
 
 | Layer | Object | Count | Governed by |
 |:---:|---|:---:|---|
-| 1 | Policy Set (`forrester-demo-hospital-monitor-only`) | 1 | `policy-set.yaml` |
-| 2 | PG Label (`forrester-demo-hospital`) | 1 | `policy-set.yaml` |
-| 3 | Security Profiles | 8 | `security-profiles.yaml` |
+| 1 | Policy Set (`FRSTR-HOSPITAL`) | 1 | `policy-set.yaml` |
+| 2 | PG Label (`FORRESTER-DEMO`) | 1 | `policy-set.yaml` |
+| 3 | Security Profiles (custom, `FRSTR-` prefixed) | 6 | `security-profiles.yaml` |
 | 4 | Policy Groups | 8 | `policy-groups.yaml` |
 | 5 | Policies | 36 | `policies.yaml` |
 | 6 | Site scope (`Hospital`) | 1 | `policy-set.yaml` (`site_labels`) |
 
-These six layers are the entire declarative surface. No UI clicks required.
-No imperative scripts beyond the `bin/` helpers that read these files and call
-the CCC REST API.
+Pure permit-all and deny-all matrix cells reference the CCC system built-in
+profiles `Allow All` and `Deny All` directly. These are not created by
+bootstrap and do not appear in `security-profiles.yaml`.
 
 ### Workflow cheatsheet
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `bootstrap.yml` | `workflow_dispatch` | Creates policy set, PG label, 8 security profiles. Idempotent. |
+| `bootstrap.yml` | `workflow_dispatch` | Creates policy set, PG label, 6 custom security profiles. Idempotent. |
 | `preview.yml` | PR opened / updated | Posts preview comment with impact diff. |
 | `apply.yml` | Push to main | Applies YAML state to CCC, then runs reconcile. |
 | `promote.yml` | Release published | Flips all policies from `MONITOR_ONLY` to `MONITOR_AND_ENFORCE`. |
 | `drift-check.yml` | Hourly + manual | Diffs CCC live state against main YAML. Opens issue on drift. |
 | `revert.yml` | `workflow_dispatch` | Opens a PR removing a named PG from YAML. |
-| `cleanup.yml` | `workflow_dispatch` | Deletes all `forrester-demo-*` objects from CCC. |
+| `cleanup.yml` | `workflow_dispatch` | Deletes all demo objects scoped by PG label + SP prefix + policy set. |
 
 ---
 
@@ -115,85 +115,117 @@ the CCC REST API.
 
 Each Policy Group classifies devices using multiple condition blocks OR-ed
 together. Within each block, conditions are AND-ed. Every PG carries the
-`forrester-demo-hospital` label and uses the `forrester-demo-` name prefix.
+`FORRESTER-DEMO` label (an invisible cleanup tag, separate from the PG name).
 
-| Policy Group | SL | Classification model | Connector sources |
-|---|:---:|---|---|
-| `forrester-demo-infusion-pumps` | 3 | Armis device-type + normalized class, OR Medigate device-class, OR manual label | Armis, Medigate |
-| `forrester-demo-patient-monitors` | 3 | Armis device-type (multi-value), OR Medigate device-class, OR manual label | Armis, Medigate |
-| `forrester-demo-imaging` | 3 | Medigate device-class, OR Armis device-type, OR manual label | Medigate, Armis |
-| `forrester-demo-ehr-servers` | 3 | Manual label AND ServiceNow CMDB trust gate (single AND block) | ServiceNow |
-| `forrester-demo-verified-servers` | 2 | Server class AND ServiceNow-known, OR server class AND CrowdStrike-known, OR server class AND Defender-known | ServiceNow, CrowdStrike, Microsoft Defender |
-| `forrester-demo-defender-pcs` | 1 | Defender onboarding status AND PC normalized class (single AND block) | Microsoft Defender |
-| `forrester-demo-building-management` | 3 | Armis device-type, OR building-management normalized class, OR manual label | Armis |
-| `forrester-demo-quarantine` | 1 | Manual label only; incident-response zone, `auto_lock_devices: true` | None (manual) |
+Seven of the eight PGs follow the same three-block classification pattern:
 
-**SL** = IEC 62443 Security Level. **Connector sources** = IdentityGraph
-connectors whose attributes appear in the match criteria. Five connector
-partners are represented: Armis, Medigate, Microsoft Defender for Endpoint,
-CrowdStrike, ServiceNow.
+1. **Block 1 (core anchor):** A `core.normalizedClass` match that places the
+   device in the right asset class.
+2. **Block 2 (connector signal):** A high-fidelity attribute from an
+   IdentityGraph connector (Armis, Medigate, ServiceNow, CrowdStrike, or
+   Microsoft Defender).
+3. **Block 3 (manual fallback):** A `core.label` match so operators can
+   manually tag devices that no connector has catalogued yet.
 
-The multi-source model means classification degrades gracefully. If a connector
-goes offline, devices still match through the remaining sources. The
-manual-label condition block is the escape hatch for devices that no connector
-has catalogued yet.
+The ISOLATION PG is the exception: Block 3 only (manual label). A device
+lands in ISOLATION only when an analyst or SOAR action explicitly tags it.
+
+| Policy Group | SL | Block 1 (core anchor) | Block 2 (connector signal) | Block 3 (manual label) |
+|---|:---:|---|---|---|
+| `INFUSION-PUMPS` | 3 | `core.normalizedClass EQ "Medical Device"` | `armis.deviceType EQ "Infusion Pump"` | `core.label EQ "INFUSION-PUMPS"` |
+| `PATIENT-MONITORS` | 3 | `core.normalizedClass EQ "Medical Device"` | `medigate.deviceClass EQ "Patient Devices"` | `core.label EQ "PATIENT-MONITORS"` |
+| `IMAGING` | 3 | `core.normalizedClass EQ "Medical Device"` | `medigate.deviceClass EQ "Imaging"` | `core.label EQ "IMAGING"` |
+| `EHR-SERVERS` | 3 | `core.normalizedClass EQ "Server Appliance and Storage"` | `core.trustAttributes CONTAINS "Known in ServiceNow"` | `core.label EQ "EHR-SERVERS"` |
+| `VERIFIED-SERVERS` | 2 | `core.normalizedClass EQ "Server Appliance and Storage"` | `core.trustAttributes CONTAINS "Known in CrowdStrike"` | `core.label EQ "VERIFIED-SERVERS"` |
+| `VERIFIED-PCS` | 1 | `core.normalizedClass EQ "PC"` | `core.trustAttributes CONTAINS "Known in Microsoft Defender"` | `core.label EQ "VERIFIED-PCS"` |
+| `BUILDING-MANAGEMENT` | 3 | `core.normalizedClass EQ "Building Management"` | `armis.deviceType EQ "BMS Controller"` | `core.label EQ "BUILDING-MANAGEMENT"` |
+| `ISOLATION` | 1 | _(none)_ | _(none)_ | `core.label EQ "QUARANTINE"` |
+
+**SL** = IEC 62443 Security Level. Five connector partners are represented:
+Armis, Medigate, Microsoft Defender for Endpoint, CrowdStrike, ServiceNow.
+
+The multi-source model means classification degrades gracefully. If a
+connector goes offline, devices still match through the remaining blocks.
+The manual-label block is the escape hatch for devices that no connector
+has catalogued yet. For ISOLATION, the `QUARANTINE` label value (distinct
+from the PG name) supports analyst incident-response tagging.
 
 ---
 
 ## The policy matrix
 
-36 policies form the 8x8 segmentation matrix. All inter-PG policies are
-BIDIRECTIONAL, so the lower triangle mirrors the upper and is shown as `.`
-below.
+36 policies form the 8x8 segmentation matrix inside the `FRSTR-HOSPITAL`
+policy set. All inter-PG policies are BIDIRECTIONAL, so the lower triangle
+mirrors the upper and is shown as `.` below.
 
 ```
-              inf  pat  img  ehr  vrf  pcs  bms  qtn
-  inf         self DENY DENY HL7  DENY DENY DENY DENY
-  pat          .   self DENY HL7  DENY DENY DENY DENY
-  img          .    .   self DCM  DENY DENY DENY DENY
-  ehr          .    .    .   self HTTP HTTP DENY DENY
-  vrf          .    .    .    .   self HTTP DENY DENY
-  pcs          .    .    .    .    .   self DENY DENY
-  bms          .    .    .    .    .    .   MOD  DENY
-  qtn          .    .    .    .    .    .    .   QTN
+          INF   PAT   IMG   EHR   VRF-S VRF-P BMS   ISO
+INF       self  DENY  DENY  HL7   DENY  DENY  DENY  DENY
+PAT        .    self  DENY  HL7   DENY  DENY  DENY  DENY
+IMG        .     .    self  DCM   DENY  DENY  DENY  DENY
+EHR        .     .     .    self  ANY*  ANY*  DENY  DENY
+VRF-S      .     .     .     .    self  ANY*  DENY  DENY
+VRF-P      .     .     .     .     .    self  DENY  DENY
+BMS        .     .     .     .     .     .    self  DENY
+ISO        .     .     .     .     .     .     .    self
 ```
 
-**Column abbreviations:**
-`inf` = infusion-pumps, `pat` = patient-monitors, `img` = imaging,
-`ehr` = ehr-servers, `vrf` = verified-servers, `pcs` = defender-pcs,
-`bms` = building-management, `qtn` = quarantine.
+**Abbreviations:**
+`INF` = INFUSION-PUMPS, `PAT` = PATIENT-MONITORS, `IMG` = IMAGING,
+`EHR` = EHR-SERVERS, `VRF-S` = VERIFIED-SERVERS, `VRF-P` = VERIFIED-PCS,
+`BMS` = BUILDING-MANAGEMENT, `ISO` = ISOLATION.
 
 **Cell legend:**
 
-| Code | Security profile | Ports | Action |
+| Code | Security Profile | Ports | Final Action |
 |---|---|---|---|
-| `self` | `forrester-demo-allow-all` | any | PERMIT (intra-PG) |
-| `HL7` | `forrester-demo-allow-hl7` | TCP 2575 | PERMIT |
-| `DCM` | `forrester-demo-allow-dicom` | TCP 104, 11112, 11113 | PERMIT |
-| `HTTP` | `forrester-demo-allow-https` | TCP 443 | PERMIT |
-| `MOD` | `forrester-demo-bms-modbus` | TCP 502 | PERMIT (BMS self only) |
-| `QTN` | `forrester-demo-quarantine` | UDP 53 permit, then deny all | PERMIT DNS only |
-| `DENY` | `forrester-demo-deny-all` | any | DENY |
+| `self` | `Allow All` (system) | any | PERMIT (intra-PG); see exceptions below |
+| `HL7` | `FRSTR-ALLOW-HL7` | TCP 2575 | DENY (only HL7 permitted) |
+| `DCM` | `FRSTR-ALLOW-DICOM` | TCP 104, 11112, 11113 | DENY (only DICOM permitted) |
+| `ANY*` | `Allow All` (system) | any | PERMIT (trusted-zone full mesh) |
+| `DENY` | `Deny All` (system) | any | DENY |
 | `.` | Bidirectional; covered by the symmetric entry above | | |
 
-**Note:** Most self-policies use `allow-all`. Two exceptions:
-`building-management` self uses `bms-modbus` (Modbus TCP 502 only), and
-`quarantine` self uses the quarantine profile (DNS resolution only).
+**Self-policy exceptions:** Six of eight self-policies use the system
+`Allow All` profile. Two exceptions: BUILDING-MANAGEMENT self uses
+`FRSTR-BMS-MODBUS` (Modbus TCP 502 only, final action DENY), and ISOLATION
+self uses `FRSTR-QUARANTINE` (DNS UDP 53 permit, then deny all, final action
+DENY).
 
-**Counts:** 8 self-policies + 6 ALLOW workflows + 22 explicit DENY pairs
-= 36 policies total. All deploy in `MONITOR_ONLY`. Tagging a release flips
-them to `MONITOR_AND_ENFORCE` via `promote.yml`.
+### Matrix breakdown
 
-**The 6 ALLOW workflows** represent the only permitted lateral traffic paths:
+| Category | Count | Security Profile shown in CCC UI |
+|---|:---:|---|
+| Self (Allow All) | 6 | `Allow All` |
+| Self (custom) | 2 | `FRSTR-BMS-MODBUS`, `FRSTR-QUARANTINE` |
+| Clinical-specific | 3 | `FRSTR-ALLOW-HL7` x2, `FRSTR-ALLOW-DICOM` x1 |
+| Trusted-zone permit | 3 | `Allow All` |
+| Deny-all | 22 | `Deny All` |
+| **Total** | **36** | **22 Deny All + 9 Allow All + 5 custom** |
 
-1. Infusion pumps to EHR servers (HL7, TCP 2575)
-2. Patient monitors to EHR servers (HL7, TCP 2575)
-3. Imaging to EHR servers (DICOM, TCP 104/11112/11113)
-4. EHR servers to verified servers (HTTPS, TCP 443)
-5. EHR servers to Defender PCs (HTTPS, TCP 443)
-6. Verified servers to Defender PCs (HTTPS, TCP 443)
+The CCC policy list renders these profile names verbatim. An analyst scanning
+the security-profile column reads the matrix intent at a glance: clinical
+workflows get protocol-specific profiles, trusted infrastructure gets
+permit-all, and everything else is deny-all.
 
-Everything else is explicitly denied.
+All 36 policies deploy in `MONITOR_ONLY`. Tagging a release flips them to
+`MONITOR_AND_ENFORCE` via `promote.yml`.
+
+### The 6 permitted lateral paths
+
+Only 6 of 28 inter-PG pairs allow traffic. The remaining 22 are explicit
+deny-all:
+
+1. **Infusion pumps to EHR servers** (HL7, TCP 2575)
+2. **Patient monitors to EHR servers** (HL7, TCP 2575)
+3. **Imaging to EHR servers** (DICOM, TCP 104/11112/11113)
+4. **EHR servers to verified servers** (Allow All, trusted zone)
+5. **EHR servers to verified PCs** (Allow All, trusted zone)
+6. **Verified servers to verified PCs** (Allow All, trusted zone)
+
+Paths 1-3 are clinical workflows restricted to a single protocol. Paths 4-6
+are trusted-infrastructure full mesh between EHR servers, CrowdStrike-verified
+servers, and Defender-onboarded PCs.
 
 ---
 
@@ -207,23 +239,24 @@ operation.
 
 Stand up the foundational objects in one click.
 
-**Goal:** Create the policy set, PG label, and all 8 security profiles in CCC
-from scratch. The analyst sees a single workflow run produce the infrastructure
-that every subsequent scenario depends on.
+**Goal:** Create the policy set, PG label, and all 6 custom security profiles
+in CCC from scratch. The analyst sees a single workflow run produce the
+infrastructure that every subsequent scenario depends on.
 
 **Trigger:** `workflow_dispatch` on `bootstrap.yml` from the GitHub Actions UI.
-Required input: confirmation token.
+Required inputs: `confirm` = `BOOTSTRAP-FORRESTER-DEMO`,
+`target_branch` = `main`.
 
 **Expected outcome:**
 
-- 1 policy set (`forrester-demo-hospital-monitor-only`) created in CCC
-- 1 PG label (`forrester-demo-hospital`) created
-- 8 security profiles created (names match `security-profiles.yaml`)
+- 1 policy set (`FRSTR-HOSPITAL`) created in CCC
+- 1 PG label (`FORRESTER-DEMO`) created
+- 6 custom security profiles created (names match `security-profiles.yaml`)
 - Auto-PR opened that writes the resolved CCC object IDs into
   `inventory/group_vars/all.yml` so subsequent CI runs reference them by ID
 
-**Reset:** Run `cleanup.yml` to delete all `forrester-demo-*` objects, then
-re-run `bootstrap.yml`. Bootstrap is idempotent; re-running without cleanup
+**Reset:** Run `cleanup.yml` to delete all demo objects, then re-run
+`bootstrap.yml`. Bootstrap is idempotent; re-running without cleanup
 is a no-op.
 
 See [The bootstrap step](#the-bootstrap-step) for the detailed walkthrough.
@@ -246,7 +279,7 @@ a new entry at the end of the `policy_groups:` list. Open a PR.
 **Example entry to paste** (matching the existing 2-space indent):
 
 ```yaml
-  - name: forrester-demo-pacs
+  - name: PACS-ARCHIVES
     description: |
       PACS imaging archive workstations. Multi-source classification:
       Medigate device-class primary, normalized class plus hostname
@@ -254,7 +287,7 @@ a new entry at the end of the `policy_groups:` list. Open a PR.
     type: DYNAMIC
     security_level: 3
     auto_lock_devices: false
-    labels: [forrester-demo-hospital]
+    labels: [FORRESTER-DEMO]
     match:
       condition_blocks:
         - conditions:
@@ -263,7 +296,7 @@ a new entry at the end of the `policy_groups:` list. Open a PR.
             - { attribute: core.normalizedClass, operator: EQ, values: ["Medical Device"] }
             - { attribute: core.hostname, operator: CONTAINS, values: ["PACS"] }
         - conditions:
-            - { attribute: core.label, operator: EQ, values: ["forrester-demo-pacs"] }
+            - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
 ```
 
 **Expected outcome:**
@@ -273,9 +306,8 @@ a new entry at the end of the `policy_groups:` list. Open a PR.
 - After merge, `apply.yml` runs and creates the PG in CCC
 - Reconcile step confirms no orphans
 
-**Reset:** Run `revert.yml` with `pg_name=forrester-demo-pacs` to open a
-removal PR. Merge that PR. The reconcile step in apply deletes the PG from
-CCC.
+**Reset:** Run `revert.yml` with `pg_name=PACS-ARCHIVES` to open a removal
+PR. Merge that PR. The reconcile step in apply deletes the PG from CCC.
 
 ---
 
@@ -290,22 +322,21 @@ classification changes go through the same review gate as any other change.
 **Trigger:** Edit `policy-groups.yaml` in the GitHub UI. Modify the
 `condition_blocks` of an existing PG entry. Open a PR.
 
-**Example edit on `forrester-demo-verified-servers`:** The PG currently has
-three condition blocks, each AND-ing the `Server Appliance and Storage`
-normalized class with one trust source (ServiceNow, CrowdStrike, or Microsoft
-Defender). To add a fourth trust source, insert a new block after the third:
+**Example edit on `VERIFIED-SERVERS`:** The PG currently matches on
+`core.normalizedClass EQ "Server Appliance and Storage"` (Block 1),
+`core.trustAttributes CONTAINS "Known in CrowdStrike"` (Block 2), and
+`core.label EQ "VERIFIED-SERVERS"` (Block 3). To add a fourth block
+recognizing Armis-corroborated servers, insert after Block 2:
 
 ```yaml
-        # Class AND Armis-known
         - conditions:
-            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
             - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in Armis"] }
 ```
 
 **Expected outcome:**
 
 - Preview comment shows the criteria diff: one new condition block added to
-  `forrester-demo-verified-servers`
+  `VERIFIED-SERVERS`
 - After merge, `apply.yml` updates the PG's `matchingCriteria` in CCC
 
 **Reset:** Open a follow-up PR that removes the added block, or revert the
@@ -313,7 +344,7 @@ merge commit. Merge to restore the original 3-block criteria.
 
 ---
 
-### Scenario 4: Swap a security profile on a policy
+### Scenario 4: Attach a security profile to a policy
 
 Change which L4 security profile governs a specific policy through a PR.
 
@@ -325,15 +356,15 @@ version-controlled.
 **Trigger:** Edit `policies.yaml` in the GitHub UI. Change the
 `security_profile` field on an existing policy entry. Open a PR.
 
-**Example edit on `forrester-demo-imaging-to-ehr`:** Swap from
-`forrester-demo-allow-dicom` to `forrester-demo-allow-https`:
+**Example edit on IMAGING to EHR-SERVERS:** Swap from `FRSTR-ALLOW-DICOM`
+to `FRSTR-ALLOW-HTTPS`:
 
 ```yaml
   # Before
-  security_profile: forrester-demo-allow-dicom
+  security_profile: FRSTR-ALLOW-DICOM
 
   # After
-  security_profile: forrester-demo-allow-https
+  security_profile: FRSTR-ALLOW-HTTPS
 ```
 
 This changes the permitted traffic between imaging and EHR servers from DICOM
@@ -347,7 +378,7 @@ This changes the permitted traffic between imaging and EHR servers from DICOM
   reference
 
 **Reset:** Open a follow-up PR that reverts the `security_profile` field back
-to `forrester-demo-allow-dicom`. Merge to restore.
+to `FRSTR-ALLOW-DICOM`. Merge to restore.
 
 ---
 
@@ -358,12 +389,12 @@ effect. This scenario documents the declarative scope.
 
 **Goal:** The analyst sees that the policy set is scoped to the `Hospital`
 site via `site_labels` in `policy-set.yaml`. When a VE is assigned to the
-Hospital site, all policies in the `forrester-demo-hospital-monitor-only`
-policy set automatically take effect for devices behind that VE.
+Hospital site, all policies in the `FRSTR-HOSPITAL` policy set automatically
+take effect for devices behind that VE.
 
 **Trigger:** Manual configuration. VE-to-site assignment is configured in the
-CCC UI or via the CCC API. The v2 demo does not automate this step; VE
-lifecycle management is out of band for this release.
+CCC UI or via the CCC API. The demo does not automate this step; VE lifecycle
+management is out of band for this release.
 
 **What to show:**
 
@@ -378,7 +409,7 @@ extends to site scoping. The YAML declares *which* site the policies target.
 The VE-to-site binding is the operational step that activates enforcement
 for a given network segment.
 
-**Reset:** N/A. This scenario is read-only for v2.
+**Reset:** N/A. This scenario is read-only.
 
 ---
 
@@ -387,22 +418,25 @@ for a given network segment.
 Tear down all demo objects and verify that pre-existing tenant content is
 untouched.
 
-**Goal:** The analyst runs the cleanup workflow and confirms that only
-`forrester-demo-*` objects are removed. Pre-existing Policy Groups in the
-tenant survive. This is the safety proof.
+**Goal:** The analyst runs the cleanup workflow and confirms that only demo
+objects are removed. Pre-existing Policy Groups in the tenant (including all
+CORK content) survive. This is the safety proof.
 
 **Trigger:** `workflow_dispatch` on `cleanup.yml` from the GitHub Actions UI.
 Leave defaults.
 
 **Expected outcome:**
 
-- All objects matching the `forrester-demo-` prefix are deleted from CCC
+- All Policy Groups carrying the `FORRESTER-DEMO` label are deleted
+- All Security Profiles with the `FRSTR-` name prefix are deleted
+- All Policies inside the `FRSTR-HOSPITAL` policy set are deleted
+- The policy set and PG label themselves are deleted
 - The cleanup log lists each deletion with object name and type
-- Pre-existing Policy Groups that do not carry the `forrester-demo-hospital`
-  label, do not have the `forrester-demo-` name prefix, and are not in the
-  `forrester-demo-hospital-monitor-only` policy set remain untouched
+- Pre-existing Policy Groups that do not carry the `FORRESTER-DEMO` label, do
+  not have the `FRSTR-` name prefix, and are not in the `FRSTR-HOSPITAL`
+  policy set remain untouched
 - Navigate to Policy Groups in the CCC UI to confirm: demo PGs gone,
-  production PGs present
+  CORK PGs and production PGs present
 
 **Reset:** Run `bootstrap.yml` followed by a push to main (or `apply.yml`
 manually) to re-create the full demo state from scratch.
@@ -410,7 +444,7 @@ manually) to re-create the full demo state from scratch.
 **For individual PG removal** without a full cleanup, use `revert.yml`:
 
 1. Navigate to Actions, select **Revert (remove a Policy Group)**.
-2. Enter the PG name (e.g., `forrester-demo-pacs`) and a reason.
+2. Enter the PG name (e.g., `PACS-ARCHIVES`) and a reason.
 3. The workflow opens a PR removing that PG from `policy-groups.yaml`.
 4. Merge the PR. The reconcile step in apply deletes the PG from CCC.
 
@@ -431,15 +465,15 @@ scenario.
 
 1. Open the repository on GitHub. Navigate to **Actions** > **Bootstrap**
    in the left sidebar.
-2. Click **Run workflow**. Enter the confirmation token when prompted.
+2. Click **Run workflow**. Set `confirm` to `BOOTSTRAP-FORRESTER-DEMO` and
+   `target_branch` to `main`.
 3. Click **Run workflow** to start the job.
 4. Watch the job log. Bootstrap performs these operations in order:
    - Authenticates to CCC via OAuth2 client credentials
-   - Looks up the policy set `forrester-demo-hospital-monitor-only` by name;
-     creates it if missing, with `state: MONITOR_ONLY` and
-     `site_labels: [Hospital]`
-   - Looks up the PG label `forrester-demo-hospital`; creates it if missing
-   - For each of the 8 security profiles in `security-profiles.yaml`: looks
+   - Looks up the policy set `FRSTR-HOSPITAL` by name; creates it if missing,
+     with `state: MONITOR_ONLY` and `site_labels: [Hospital]`
+   - Looks up the PG label `FORRESTER-DEMO`; creates it if missing
+   - For each of the 6 security profiles in `security-profiles.yaml`: looks
      up by name, creates if missing
    - Opens an auto-PR that writes the resolved CCC object IDs into
      `inventory/group_vars/all.yml`
@@ -454,16 +488,14 @@ Every create operation checks for existence by name first.
 
 | Type | Name | Source |
 |---|---|---|
-| Policy Set | `forrester-demo-hospital-monitor-only` | `policy-set.yaml` |
-| PG Label | `forrester-demo-hospital` | `policy-set.yaml` |
-| Security Profile | `forrester-demo-allow-dicom` | `security-profiles.yaml` |
-| Security Profile | `forrester-demo-allow-hl7` | `security-profiles.yaml` |
-| Security Profile | `forrester-demo-allow-https` | `security-profiles.yaml` |
-| Security Profile | `forrester-demo-clinical-iot` | `security-profiles.yaml` |
-| Security Profile | `forrester-demo-bms-modbus` | `security-profiles.yaml` |
-| Security Profile | `forrester-demo-allow-all` | `security-profiles.yaml` |
-| Security Profile | `forrester-demo-deny-all` | `security-profiles.yaml` |
-| Security Profile | `forrester-demo-quarantine` | `security-profiles.yaml` |
+| Policy Set | `FRSTR-HOSPITAL` | `policy-set.yaml` |
+| PG Label | `FORRESTER-DEMO` | `policy-set.yaml` |
+| Security Profile | `FRSTR-ALLOW-DICOM` | `security-profiles.yaml` |
+| Security Profile | `FRSTR-ALLOW-HL7` | `security-profiles.yaml` |
+| Security Profile | `FRSTR-ALLOW-HTTPS` | `security-profiles.yaml` |
+| Security Profile | `FRSTR-CLINICAL-IOT` | `security-profiles.yaml` |
+| Security Profile | `FRSTR-BMS-MODBUS` | `security-profiles.yaml` |
+| Security Profile | `FRSTR-QUARANTINE` | `security-profiles.yaml` |
 
 ---
 
@@ -479,46 +511,52 @@ for scoping, and the target site.
 
 ```yaml
 policy_set:
-  name: forrester-demo-hospital-monitor-only
+  name: FRSTR-HOSPITAL
   state: MONITOR_ONLY
   policy_group_labels:
-    - forrester-demo-hospital
+    - FORRESTER-DEMO
   site_labels:
     - Hospital
 ```
 
 The policy set is the isolation boundary. Policies inside this set only
-target Policy Groups carrying the `forrester-demo-hospital` label and only
-apply to VEs assigned to the Hospital site. The `MONITOR_ONLY` state means
-all policies simulate by default; `promote.yml` flips to
-`MONITOR_AND_ENFORCE` when a release is tagged.
+target Policy Groups carrying the `FORRESTER-DEMO` label and only apply to
+VEs assigned to the Hospital site. The `MONITOR_ONLY` state means all
+policies simulate by default; `promote.yml` flips to `MONITOR_AND_ENFORCE`
+when a release is tagged.
 
 This file also defines the PG label itself:
 
 ```yaml
 policy_group_labels:
-  - name: forrester-demo-hospital
+  - name: FORRESTER-DEMO
     description: |
-      Policy Groups owned by the Forrester GitOps demo. Used as the
-      scoping boundary for the dedicated policy set and as the safety
-      tag for reconcile.py.
+      Marker label for Policy Groups owned by the Forrester GitOps
+      demo. Used both as the policy-set scoping boundary and as the
+      reconcile.py safety tag. Any PG without this label is never
+      considered for deletion.
 ```
 
 ### `security-profiles.yaml`
 
-Defines 8 L4 security profiles, each a named set of protocol/port/action
-rules. First-match-wins ordering with an implicit trailing deny.
+Defines 6 custom L4 security profiles, each a named set of
+protocol/port/action rules. All custom profile names carry the `FRSTR-`
+prefix (the cleanup boundary for SPs).
 
 | Profile | Ports | Use |
 |---|---|---|
-| `forrester-demo-allow-dicom` | TCP 104, 11112, 11113 | Imaging modality to archive |
-| `forrester-demo-allow-hl7` | TCP 2575 | Clinical messaging (ADT, orders, results) |
-| `forrester-demo-allow-https` | TCP 443 | Management plane, clinician thick-client access |
-| `forrester-demo-clinical-iot` | UDP 53, UDP 123, TCP 443 | Locked-down IoT egress: DNS + NTP + HTTPS |
-| `forrester-demo-bms-modbus` | TCP 502 | Building automation control (Modbus TCP) |
-| `forrester-demo-allow-all` | any | Trusted intra-zone traffic (self-policies) |
-| `forrester-demo-deny-all` | any (deny) | Explicit zero-trust segregation |
-| `forrester-demo-quarantine` | UDP 53 permit, then deny all | Incident-response DNS-only lockdown |
+| `FRSTR-ALLOW-DICOM` | TCP 104, 11112, 11113 | Imaging modality to archive |
+| `FRSTR-ALLOW-HL7` | TCP 2575 | Clinical messaging (ADT, orders, results) |
+| `FRSTR-ALLOW-HTTPS` | TCP 443 | Management plane, clinician thick-client access |
+| `FRSTR-CLINICAL-IOT` | UDP 53, UDP 123, TCP 443 | Locked-down IoT egress: DNS + NTP + HTTPS |
+| `FRSTR-BMS-MODBUS` | TCP 502 | Building automation control (Modbus TCP) |
+| `FRSTR-QUARANTINE` | UDP 53 permit, then deny all | Incident-response DNS-only lockdown |
+
+Pure permit-all and deny-all matrix cells reference the CCC system built-in
+profiles `Allow All` and `Deny All` directly. These system profiles are not
+defined in this file and are not created by bootstrap. Using the system names
+means the CCC UI renders "Allow All" and "Deny All" verbatim in the policy
+list, making matrix intent visible at a glance.
 
 ### `policy-groups.yaml`
 
@@ -529,30 +567,31 @@ classification table.
 
 Key schema fields per entry:
 
-- `name` (string): must carry the `forrester-demo-` prefix
+- `name` (string): clean functional name (no prefix; the PG label is the
+  scoping mechanism)
 - `type`: `DYNAMIC`
 - `security_level` (int): IEC 62443 Security Level (1, 2, or 3)
-- `auto_lock_devices` (bool): `true` only for quarantine
-- `labels` (list): must include `forrester-demo-hospital`
+- `auto_lock_devices` (bool): `true` only for ISOLATION
+- `labels` (list): must include `FORRESTER-DEMO`
 - `match.condition_blocks` (list of lists): the OR-of-AND classification
-  logic, using attributes from `core.*`, `armis.*`, `medigate.*`, and
-  `defender.*` namespaces
+  logic, using attributes from `core.*`, `armis.*`, and `medigate.*`
+  namespaces
 
 ### `policies.yaml`
 
 Defines the 36-policy segmentation matrix: 8 self-policies (intra-PG),
-6 ALLOW workflows (protocol-specific L4 profiles), and 22 explicit DENY
-pairs. See [The policy matrix](#the-policy-matrix) for the full grid.
+3 clinical-specific workflows (HL7/DICOM), 3 trusted-zone permit-all pairs,
+and 22 explicit deny-all pairs. See [The policy matrix](#the-policy-matrix)
+for the full grid.
 
 Key schema fields per entry:
 
-- `name` (string): `forrester-demo-{source}-to-{destination}` or
-  `forrester-demo-{pg}-self`
 - `direction`: `BIDIRECTIONAL` or `SELF`
 - `source_pg`, `destination_pg`: PG names (resolved to CCC IDs at apply time)
-- `security_profile`: profile name (resolved to CCC ID at apply time)
+- `security_profile`: profile name; one of the 6 custom `FRSTR-` profiles or
+  system `Allow All` / `Deny All`
 - `final_action`: `PERMIT` or `DENY`
-- `policy_set`: `forrester-demo-hospital-monitor-only`
+- `policy_set`: `FRSTR-HOSPITAL`
 - `state`: `MONITOR_ONLY` (flipped by `promote.yml` on release tag)
 
 ---
@@ -563,7 +602,7 @@ Key schema fields per entry:
 .
 ├── README.md                       <- you are here
 ├── policy-set.yaml                 <- policy set + PG label + site scope
-├── security-profiles.yaml          <- 8 L4 security profiles
+├── security-profiles.yaml          <- 6 custom L4 security profiles
 ├── policy-groups.yaml              <- 8 Policy Groups (match criteria)
 ├── policies.yaml                   <- 36 Policies (8x8 matrix)
 ├── inventory/group_vars/all.yml    <- tenant-specific IDs (auto-updated by bootstrap)
@@ -646,41 +685,49 @@ ssh elisity@10.0.0.175 'cd /home/elisity/github-runners/automation-playbook && n
 
 Three independent guards protect pre-existing tenant content from
 modification or deletion by the demo's reconcile and cleanup operations.
+Each guard operates on a different object type, and all three are independent
+of any existing CORK or Default content in the tenant.
 
-### Guard 1: PG label (`forrester-demo-hospital`)
+### Guard 1: PG label (`FORRESTER-DEMO`)
 
-Every Policy Group managed by this demo carries the
-`forrester-demo-hospital` label. The policy set is scoped to this label.
-`reconcile.py` only considers PGs with this label when computing the
-delete set. Pre-existing Policy Groups do not carry this label and are
-invisible to reconciliation.
+Every Policy Group managed by this demo carries the `FORRESTER-DEMO` label.
+This label is a separate field from the PG name; PG names are clean
+functional identifiers (`INFUSION-PUMPS`, `IMAGING`, etc.) with no prefix
+and no risk of name collision. The policy set is scoped to this label.
+`reconcile.py` only considers PGs with the `FORRESTER-DEMO` label when
+computing the delete set. Pre-existing Policy Groups (including all CORK PGs)
+do not carry this label and are invisible to reconciliation.
 
-### Guard 2: Name prefix (`forrester-demo-`)
+### Guard 2: Security profile name prefix (`FRSTR-`)
 
-Every object created by this demo (PGs, policies, profiles, the policy set
-itself) uses the `forrester-demo-` name prefix. `cleanup_by_prefix.py` uses
-this prefix as its sole deletion filter. Objects without the prefix are never
-candidates for deletion.
+Every custom Security Profile created by this demo uses the `FRSTR-` name
+prefix. `cleanup_by_prefix.py` uses this prefix as its deletion filter for
+profiles. CCC has no labelling mechanism for Security Profiles, so the name
+prefix is the only safety boundary. CORK Security Profiles do not carry the
+`FRSTR-` prefix and are never candidates for deletion.
 
-### Guard 3: Policy set boundary (`forrester-demo-hospital-monitor-only`)
+### Guard 3: Policy set boundary (`FRSTR-HOSPITAL`)
 
-All demo policies live in a dedicated policy set, separate from the Default
-policy set where production policies reside. `reconcile.py` only deletes
-policies within the demo policy set. Policies in other sets are out of scope.
+All demo policies live in a dedicated policy set (`FRSTR-HOSPITAL`), separate
+from the Default policy set where production policies reside. `reconcile.py`
+only deletes policies within the `FRSTR-HOSPITAL` policy set. Policies in
+other sets are out of scope.
 
 ### How the guards interact
 
-All three conditions must be true before `reconcile.py` will delete an object:
+Before `reconcile.py` will delete an object, all applicable conditions must
+be true:
 
-1. The object's name starts with `forrester-demo-`
-2. The object carries the `forrester-demo-hospital` label (for PGs)
-3. The object belongs to the `forrester-demo-hospital-monitor-only` policy
-   set (for policies)
-4. The object is not declared in the current YAML files
+1. For Policy Groups: the PG carries the `FORRESTER-DEMO` label AND is not
+   declared in the current YAML files
+2. For Security Profiles: the SP name starts with `FRSTR-` AND is not
+   declared in the current YAML files
+3. For Policies: the policy belongs to the `FRSTR-HOSPITAL` policy set AND
+   is not declared in the current YAML files
 
-Pre-existing Policy Groups in the tenant fail all three guards. They do not
-carry the `forrester-demo-` name prefix, do not have the
-`forrester-demo-hospital` label, and their policies are not in the demo
+Pre-existing tenant content fails every guard. CORK Policy Groups do not
+carry the `FORRESTER-DEMO` label, CORK Security Profiles do not have the
+`FRSTR-` name prefix, and CORK Policies are not in the `FRSTR-HOSPITAL`
 policy set. The demo can bootstrap, apply, promote, revert, and clean up
 repeatedly without any risk to existing tenant content.
 
