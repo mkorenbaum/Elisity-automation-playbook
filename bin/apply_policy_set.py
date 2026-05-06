@@ -83,16 +83,28 @@ def resolve_pg_label_ids(creds: dict, token: str, label_names: list[str]) -> lis
 
 
 def resolve_site_labels(creds: dict, token: str, site_labels: list[str]) -> list[str]:
-    """Resolve site label strings. Sites use the label field directly."""
+    """Resolve site label NAMES (e.g. 'Hospital') to numericIds (e.g. '6').
+
+    The CCC policy-sets create endpoint requires siteLabels as numeric IDs,
+    not human-readable label strings. Sending the bare name returns
+    400 'Could not locate selected Site Label'.
+    """
+    if not site_labels:
+        return []
     listing = ccc_get(creds, token, "/api/topology/v2/sites") or {}
-    sites = listing.get("content", listing) if isinstance(listing, dict) else listing
-    if isinstance(sites, dict):
-        sites = sites.get("content", [])
-    known = {s.get("label", s.get("name", "")) for s in sites}
-    for label in site_labels:
-        if label not in known:
-            sys.stderr.write(f"WARNING: site label '{label}' not found in CCC sites. Proceeding anyway.\n")
-    return site_labels
+    sites = listing.get("content", []) if isinstance(listing, dict) else listing
+    by_label = {s.get("label"): s.get("numericId") for s in sites if s.get("label")}
+    resolved = []
+    for name in site_labels:
+        nid = by_label.get(name)
+        if nid is None:
+            sys.stderr.write(
+                f"ERROR: site label '{name}' not found in tenant. "
+                f"Available: {list(by_label)}\n"
+            )
+            sys.exit(1)
+        resolved.append(nid)
+    return resolved
 
 
 def main() -> int:
@@ -128,7 +140,14 @@ def main() -> int:
     }
 
     result = ccc_post(creds, token, "/api/policy/v1/policy-sets", body)
-    ps_id = result.get("id", "unknown") if result else "unknown"
+    # CCC POST returns either a JSON-encoded UUID string or an object with
+    # an id field — handle both shapes (also covers None / empty body).
+    if isinstance(result, str):
+        ps_id = result
+    elif isinstance(result, dict):
+        ps_id = result.get("id", "unknown")
+    else:
+        ps_id = "unknown"
 
     print(f"## Policy Set `{ps['name']}`")
     print(f"\n> Created policy set (ID: `{ps_id}`).")

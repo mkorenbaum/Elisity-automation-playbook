@@ -23,7 +23,9 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CCC_PY = REPO_ROOT / "bin" / "ccc.py"
 
-PROTOCOL_MAP = {"tcp": 6, "udp": 17, "icmp": 1, "any": None}
+# CCC encodes "any" protocol as -1 (per Allow All / Deny All system SPs).
+# Omitting the field defaults server-side to 0, which is rejected.
+PROTOCOL_MAP = {"tcp": 6, "udp": 17, "icmp": 1, "any": -1}
 
 
 def load_creds() -> dict:
@@ -73,31 +75,43 @@ def ccc_post(creds: dict, token: str, path: str, body: dict) -> Any:
 
 
 def build_rule_set(rules: list[dict]) -> list[dict]:
-    """Convert YAML rules to CCC ruleSet format."""
+    """Convert YAML rules to CCC ruleSet format.
+
+    CCC create-time shape per the Allow All / Deny All system profiles
+    and CCC builder healthcare template:
+      { "property": {
+          "protocol": -1,                 // 6=tcp, 17=udp, 1=icmp, -1=any (NEVER omit)
+          "sourcePorts": "Any",           // "Any" or "<port>" or "<lo>-<hi>" — REQUIRED
+          "destinationPorts": "Any",      // same; multi-port becomes multiple rules
+          "permit": true                  // true=allow, false=deny
+      } }
+
+    Comma-separated dst_ports (e.g. "104,11112,11113") become one
+    ruleSet entry per port — CCC expects single ports/ranges per
+    entry, not comma-lists.
+    """
     result = []
     for rule in rules:
         proto_str = rule.get("protocol", "any").lower()
-        proto_num = PROTOCOL_MAP.get(proto_str)
-
-        dst_ports = rule.get("dst_ports", "any")
-        if dst_ports == "any":
-            dst_ports = None
-
-        src_ports = rule.get("src_ports", "any")
-        if src_ports == "any":
-            src_ports = None
-
+        proto_num = PROTOCOL_MAP.get(proto_str, -1)
         is_permit = rule.get("action", "permit").lower() == "permit"
 
-        prop: dict[str, Any] = {"permit": is_permit}
-        if proto_num is not None:
-            prop["protocol"] = proto_num
-        if dst_ports is not None:
-            prop["destinationPorts"] = str(dst_ports)
-        if src_ports is not None:
-            prop["sourcePorts"] = str(src_ports)
+        src = rule.get("src_ports", "any")
+        src_str = "Any" if str(src).lower() == "any" else str(src)
 
-        result.append({"property": prop})
+        dst_raw = rule.get("dst_ports", "any")
+        if str(dst_raw).lower() == "any":
+            dst_list: list[str] = ["Any"]
+        else:
+            dst_list = [p.strip() for p in str(dst_raw).split(",") if p.strip()]
+
+        for dst_str in dst_list:
+            result.append({"property": {
+                "protocol": proto_num,
+                "sourcePorts": src_str,
+                "destinationPorts": dst_str,
+                "permit": is_permit,
+            }})
     return result
 
 

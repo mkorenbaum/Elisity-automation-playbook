@@ -57,26 +57,35 @@ def _read_secret(arg: str) -> str:
 
 
 def _normalize(text: str, content_type: str) -> str:
-    """Normalize NDJSON listings into a {"content": [...]} envelope.
+    """Normalize NDJSON list responses into a {"content": [...]} envelope.
 
-    CCC's v1 list endpoints (/api/policy/v1/policy-sets,
-    /api/policy/v1/policy-group-label, /api/policy/v1/security-profiles)
-    respond with `application/x-ndjson` — one JSON object per line, no
-    array wrapper. Callers expect the v2-style `{"content": [...]}`
-    pagination envelope, so we transform NDJSON listings into that shape
-    here. Pass-through everything else.
+    CCC's v1 endpoints respond with `application/x-ndjson`:
+      - List endpoints (policy-sets GET, policy-group-label GET,
+        security-profiles GET) emit one JSON OBJECT per line.
+      - POST create endpoints emit a single JSON STRING — just the
+        new object's UUID, e.g. `"1144aff7-f39c-..."`.
+
+    For list responses we wrap into the v2-style content envelope so
+    callers can `.get("content", [])` consistently. For POST responses
+    that emit a primitive (string/number/bool), we pass through
+    unchanged so the caller sees the UUID directly.
     """
     if "ndjson" not in content_type:
         return text
+    lines = [l for l in text.split("\n") if l.strip()]
+    if not lines:
+        return text
+    # If the first line is a JSON primitive (UUID-as-string from POST),
+    # pass through — the caller wants the value as-is.
+    first = lines[0].lstrip()
+    if first[:1] in ('"', "-") or first[:1].isdigit() or first in ("null", "true", "false"):
+        return text
+    # Otherwise: NDJSON of objects — wrap as content envelope.
     items = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
+    for line in lines:
         try:
             items.append(json.loads(line))
         except json.JSONDecodeError:
-            # Malformed line — preserve raw output rather than swallow
             return text
     return json.dumps({"content": items})
 

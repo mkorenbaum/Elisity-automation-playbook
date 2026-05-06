@@ -115,11 +115,10 @@ policy_groups:
   # signals confirms it AND the asset class is server.
   - name: forrester-demo-verified-servers
     description: |
-      Server appliances and storage that are corroborated by either
-      ServiceNow CMDB or an EDR (CrowdStrike or Microsoft Defender).
-      Multi-source trust composition — a server qualifies when the
-      asset class is right AND at least one independent system knows
-      about it.
+      Server appliances and storage corroborated by either ServiceNow
+      CMDB or an EDR (CrowdStrike or Microsoft Defender). Multi-source
+      trust composition: a server qualifies when the asset class is
+      right AND at least one independent system knows it.
     type: DYNAMIC
     security_level: 2
     auto_lock_devices: false

@@ -104,6 +104,17 @@ def main() -> int:
     sp_items = sp_listing.get("content", []) if isinstance(sp_listing, dict) else sp_listing
     sp_by_name = {sp["name"]: sp["id"] for sp in sp_items}
 
+    # CCC requires `finalAction` on a Policy to be one of the four
+    # system Security Profiles: Allow All / Allow All (Log) / Deny All
+    # / Deny All (Log). It is NOT the same as `securityProfiles[0]` —
+    # securityProfiles holds the L4 rule set the policy applies, while
+    # finalAction is the terminal verdict if no rule matches.
+    if "Allow All" not in sp_by_name or "Deny All" not in sp_by_name:
+        sys.stderr.write("ERROR: CCC tenant is missing built-in Allow All / Deny All system profiles.\n")
+        sys.exit(1)
+    permit_id = sp_by_name["Allow All"]
+    deny_id = sp_by_name["Deny All"]
+
     # Group policies by policy set
     policies_by_ps: dict[str, list[dict]] = {}
     for pol in policies:
@@ -125,36 +136,43 @@ def main() -> int:
         existing_by_name = {p["name"]: p for p in existing.get("content", [])}
 
         for pol in ps_policies:
-            name = pol["name"]
-            if name in existing_by_name:
-                skipped.append(name)
-                continue
+            yaml_name = pol["name"]   # YAML name is documentation; CCC needs "<src> > <dst>"
 
             # Resolve PG names to IDs
             src_pg_name = pol["source_pg"]
             dst_pg_name = pol["destination_pg"]
             sp_name = pol["security_profile"]
 
+            # CCC requires Policy names in the form "<srcPG> > <dstPG>".
+            # The YAML field `name` is documentation only — CCC rejects
+            # any other format with 400 "different format than expected".
+            ccc_name = f"{src_pg_name} > {dst_pg_name}"
+
+            if ccc_name in existing_by_name:
+                skipped.append(ccc_name)
+                continue
+
             if src_pg_name not in pg_by_name:
-                errors.append(f"`{name}`: source PG `{src_pg_name}` not found")
+                errors.append(f"`{yaml_name}`: source PG `{src_pg_name}` not found")
                 continue
             if dst_pg_name not in pg_by_name:
-                errors.append(f"`{name}`: destination PG `{dst_pg_name}` not found")
+                errors.append(f"`{yaml_name}`: destination PG `{dst_pg_name}` not found")
                 continue
             if sp_name not in sp_by_name:
-                errors.append(f"`{name}`: security profile `{sp_name}` not found")
+                errors.append(f"`{yaml_name}`: security profile `{sp_name}` not found")
                 continue
 
             direction = pol.get("direction", "BIDIRECTIONAL")
             is_mirrored = direction == "BIDIRECTIONAL"
+            final_action_id = permit_id if pol.get("final_action", "PERMIT") == "PERMIT" else deny_id
 
             body = {
-                "name": name,
+                "name": ccc_name,
                 "description": pol.get("description", "").strip() if pol.get("description") else "",
                 "srcPolicyGroup": pg_by_name[src_pg_name],
                 "dstPolicyGroup": pg_by_name[dst_pg_name],
                 "securityProfiles": [sp_by_name[sp_name]],
-                "finalAction": sp_by_name[sp_name],
+                "finalAction": final_action_id,
                 "monitorMode": pol.get("state", "MONITOR_ONLY"),
                 "isMirrored": is_mirrored,
                 "isCustomName": False,
@@ -165,7 +183,7 @@ def main() -> int:
                 f"/api/policy/v1/policy-sets/{ps_id}/policies",
                 body,
             )
-            created.append(name)
+            created.append(ccc_name)
 
     print("## Policies")
     print()

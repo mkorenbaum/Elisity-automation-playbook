@@ -27,7 +27,9 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CCC_PY = REPO_ROOT / "bin" / "ccc.py"
 
-PROTOCOL_MAP = {"tcp": 6, "udp": 17, "icmp": 1, "any": None}
+# CCC encodes "any" protocol as -1 (per Allow All / Deny All system SPs).
+# Omitting the field defaults server-side to 0, which is rejected.
+PROTOCOL_MAP = {"tcp": 6, "udp": 17, "icmp": 1, "any": -1}
 
 
 def load_creds() -> dict:
@@ -76,28 +78,84 @@ def ccc_post(creds: dict, token: str, path: str, body: dict) -> Any:
     return None
 
 
+def extract_id(result: Any) -> str:
+    """Pull the UUID out of a CCC POST response.
+
+    CCC POST endpoints return one of:
+      - a JSON-encoded UUID string: `"abc-..."`  (most v1 create endpoints)
+      - an object with an id field: `{"id": "abc-...", ...}`  (some endpoints)
+      - empty / None
+    """
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        return result.get("id", "unknown")
+    return "unknown"
+
+
+def resolve_site_label_ids(creds: dict, token: str, names: list[str]) -> list[str]:
+    """Resolve site label NAMES (e.g. 'Hospital') to numericIds (e.g. '6').
+
+    The CCC policy-sets endpoint requires siteLabels as numeric IDs,
+    not the human-readable label strings.
+    """
+    if not names:
+        return []
+    listing = ccc_get(creds, token, "/api/topology/v2/sites") or {}
+    sites = listing.get("content", []) if isinstance(listing, dict) else listing
+    by_label = {s.get("label"): s.get("numericId") for s in sites if s.get("label")}
+    resolved = []
+    for name in names:
+        nid = by_label.get(name)
+        if nid is None:
+            sys.stderr.write(
+                f"ERROR: site label '{name}' not found in tenant. "
+                f"Available: {list(by_label)}\n"
+            )
+            sys.exit(1)
+        resolved.append(nid)
+    return resolved
+
+
 def build_rule_set(rules: list[dict]) -> list[dict]:
-    """Convert YAML rules to CCC ruleSet format."""
+    """Convert YAML rules to CCC ruleSet format.
+
+    CCC create-time shape (per CCC builder healthcare template):
+      { "property": {
+          "protocol": 6,                  // 6=tcp, 17=udp, 1=icmp; omitted=any
+          "sourcePorts": "Any",           // string: "Any" or "<port>" or "<lo>-<hi>"
+          "destinationPorts": "Any",      // same; multi-port becomes multiple rules
+          "permit": true                  // true=allow, false=deny
+      } }
+
+    Comma-separated dst_ports (e.g. "104,11112,11113") become one
+    ruleSet entry per port — CCC expects single ports or ranges per
+    entry, not comma-lists.
+    """
     result = []
     for rule in rules:
         proto_str = rule.get("protocol", "any").lower()
         proto_num = PROTOCOL_MAP.get(proto_str)
-        dst_ports = rule.get("dst_ports", "any")
-        if dst_ports == "any":
-            dst_ports = None
-        src_ports = rule.get("src_ports", "any")
-        if src_ports == "any":
-            src_ports = None
         is_permit = rule.get("action", "permit").lower() == "permit"
 
-        prop: dict[str, Any] = {"permit": is_permit}
-        if proto_num is not None:
-            prop["protocol"] = proto_num
-        if dst_ports is not None:
-            prop["destinationPorts"] = str(dst_ports)
-        if src_ports is not None:
-            prop["sourcePorts"] = str(src_ports)
-        result.append({"property": prop})
+        src = rule.get("src_ports", "any")
+        src_str = "Any" if str(src).lower() == "any" else str(src)
+
+        dst_raw = rule.get("dst_ports", "any")
+        if str(dst_raw).lower() == "any":
+            dst_list: list[str] = ["Any"]
+        else:
+            dst_list = [p.strip() for p in str(dst_raw).split(",") if p.strip()]
+
+        for dst_str in dst_list:
+            prop: dict[str, Any] = {
+                "sourcePorts": src_str,
+                "destinationPorts": dst_str,
+                "permit": is_permit,
+            }
+            if proto_num is not None:
+                prop["protocol"] = proto_num
+            result.append({"property": prop})
     return result
 
 
@@ -129,7 +187,7 @@ def main() -> int:
                 "name": name,
                 "description": lbl.get("description", "").strip(),
             })
-            lid = result.get("id", "unknown") if result else "unknown"
+            lid = extract_id(result)
             pg_label_ids[name] = lid
             actions.append(f"PG label `{name}`: **created** (ID: `{lid}`)")
 
@@ -142,17 +200,18 @@ def main() -> int:
         ps_id = ps_by_name[ps_name]["id"]
         actions.append(f"Policy set `{ps_name}`: already exists (ID: `{ps_id}`)")
     else:
-        # Resolve label IDs and site labels
+        # Resolve PG label names → CCC IDs and site label names → numericIds
         resolved_label_ids = [pg_label_ids[n] for n in ps_def.get("policy_group_labels", []) if n in pg_label_ids]
+        site_label_ids = resolve_site_label_ids(creds, token, ps_def.get("site_labels", []))
         body = {
             "name": ps_name,
             "description": ps_def.get("description", "").strip(),
             "state": ps_def.get("state", "MONITOR_ONLY"),
             "policyGroupLabels": resolved_label_ids,
-            "siteLabels": ps_def.get("site_labels", []),
+            "siteLabels": site_label_ids,
         }
         result = ccc_post(creds, token, "/api/policy/v1/policy-sets", body)
-        ps_id = result.get("id", "unknown") if result else "unknown"
+        ps_id = extract_id(result)
         actions.append(f"Policy set `{ps_name}`: **created** (ID: `{ps_id}`)")
 
     # ── 3. Security Profiles ─────────────────────────────────────
@@ -173,7 +232,7 @@ def main() -> int:
                 "ruleSet": build_rule_set(sp.get("rules", [])),
             }
             result = ccc_post(creds, token, "/api/policy/v1/security-profiles", body)
-            sid = result.get("id", "unknown") if result else "unknown"
+            sid = extract_id(result)
             sp_id_map[name] = sid
             actions.append(f"Security profile `{name}`: **created** (ID: `{sid}`)")
 
