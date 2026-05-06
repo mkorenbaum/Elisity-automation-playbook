@@ -15,7 +15,7 @@
 # resolved IDs into inventory/group_vars/all.yml.
 
 policy_set:
-  name: FRSTR-HOSPITAL-MONITOR-ONLY
+  name: FRSTR-HOSPITAL
   description: |
     Forrester demo policy set, Hospital site, monitor-only by default.
     Promotion to MONITOR_AND_ENFORCE happens via release tag.

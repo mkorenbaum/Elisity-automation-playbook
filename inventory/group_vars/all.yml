@@ -8,7 +8,7 @@
 # ── v2 policy set (created by bootstrap) ─────────────────────────
 # After running bootstrap.yml, update these with the resolved IDs
 # printed by bootstrap.py.
-ccc_policy_set_name: "FRSTR-HOSPITAL-MONITOR-ONLY"
+ccc_policy_set_name: "FRSTR-HOSPITAL"
 ccc_policy_set_id:   "fc2ab478-bd3b-4732-9e8f-5238dee17dca"                        # set after bootstrap
 
 # PG label created by bootstrap — scopes which PGs participate in
