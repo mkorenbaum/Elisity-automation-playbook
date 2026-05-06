@@ -18,7 +18,7 @@ on:
         default: 'Manual promotion via workflow_dispatch'
 
 permissions:
-  contents: read
+  contents: write          # need write to append promotion summary to release body
 
 concurrency:
   group: ccc-apply       # serialize against apply.yml — never both at once
