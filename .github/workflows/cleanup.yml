@@ -1,0 +1,54 @@
+name: Cleanup demo state
+
+# Manually-triggered teardown of the demo's CCC objects. Run this from
+# the Actions tab between demos to leave the tenant clean.
+#
+# Deletes every Policy and Policy Group in the target Policy Set whose
+# name starts with the prefix below (default: forrester-demo-). Does
+# NOT touch any other tenant state.
+
+on:
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: 'Name prefix for objects to delete'
+        required: true
+        default: 'forrester-demo-'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ccc-apply       # serialize against apply / promote
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    environment: insights-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure PyYAML is installed
+        run: |
+          python3 -m venv /tmp/forrester-venv 2>/dev/null || true
+          /tmp/forrester-venv/bin/pip install --quiet --upgrade PyYAML
+          echo "/tmp/forrester-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Render creds + run cleanup
+        env:
+          CCC_URL: ${{ secrets.CCC_URL }}
+          CCC_CLIENT_ID: ${{ secrets.CCC_CLIENT_ID }}
+          CCC_CLIENT_SECRET: ${{ secrets.CCC_CLIENT_SECRET }}
+          PREFIX: ${{ inputs.prefix }}
+        run: |
+          make ci-creds
+          python3 bin/cleanup_by_prefix.py "$PREFIX" | tee /tmp/cleanup.md
+
+      - name: Append cleanup summary to job
+        if: always()
+        run: |
+          if [ -f /tmp/cleanup.md ]; then
+            cat /tmp/cleanup.md >> "$GITHUB_STEP_SUMMARY"
+          fi
