@@ -55,6 +55,14 @@ jobs:
           make ci-creds
           make ci-apply 2>&1 | tee /tmp/apply.log
 
+      - name: Reconcile — delete CCC orphans no longer declared in YAML
+        # This step makes apply two-way: removing a YAML entry now
+        # actually deletes the corresponding object from CCC. Scoped
+        # to the forrester-demo- prefix — production policies are
+        # never at risk.
+        run: |
+          python3 bin/reconcile.py "forrester-demo-" 2>&1 | tee /tmp/reconcile.md
+
       - name: Build apply summary
         if: always()
         run: |
@@ -72,6 +80,10 @@ jobs:
             echo
             echo "</details>"
             echo
+            if [ -s /tmp/reconcile.md ]; then
+              cat /tmp/reconcile.md
+              echo
+            fi
             echo "**Next step in the GitOps pipeline:** cut a release tag "
             echo "(\`vX.Y.Z\`) to promote these policies to "
             echo "\`MONITOR_AND_ENFORCE\`."
