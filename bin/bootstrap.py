@@ -114,8 +114,9 @@ def main() -> int:
     actions: list[str] = []
 
     # ── 1. Policy Group Label ────────────────────────────────────
-    label_listing = ccc_get(creds, token, "/api/policy/v1/policy-group-label") or []
-    label_by_name = {lb["name"]: lb for lb in label_listing}
+    label_listing = ccc_get(creds, token, "/api/policy/v1/policy-group-label") or {}
+    label_items = label_listing.get("content", []) if isinstance(label_listing, dict) else label_listing
+    label_by_name = {lb["name"]: lb for lb in label_items}
 
     pg_label_ids: dict[str, str] = {}
     for lbl in pg_labels_def:

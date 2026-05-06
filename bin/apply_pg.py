@@ -74,8 +74,9 @@ def ccc_post(creds: dict, token: str, path: str, body: dict) -> Any:
 
 def resolve_pg_label_ids(creds: dict, token: str, label_names: list[str]) -> list[str]:
     """Resolve PG label names to CCC IDs."""
-    listing = ccc_get(creds, token, "/api/policy/v1/policy-group-label") or []
-    by_name = {lb["name"]: lb["id"] for lb in listing}
+    listing = ccc_get(creds, token, "/api/policy/v1/policy-group-label") or {}
+    items = listing.get("content", []) if isinstance(listing, dict) else listing
+    by_name = {lb["name"]: lb["id"] for lb in items}
     ids = []
     for name in label_names:
         if name in by_name:
@@ -122,8 +123,9 @@ def main() -> int:
         all_label_names.update(pg.get("labels", []))
     label_id_map = {}
     if all_label_names:
-        listing = ccc_get(creds, token, "/api/policy/v1/policy-group-label") or []
-        label_id_map = {lb["name"]: lb["id"] for lb in listing}
+        listing = ccc_get(creds, token, "/api/policy/v1/policy-group-label") or {}
+        items = listing.get("content", []) if isinstance(listing, dict) else listing
+        label_id_map = {lb["name"]: lb["id"] for lb in items}
 
     created: list[str] = []
     skipped: list[str] = []
