@@ -1,0 +1,92 @@
+---
+# Git-tracked Security Profile definitions.
+#
+# Security profiles define the L4 rules attached to each Policy. The
+# CCC builder healthcare template ships OT-flavored profiles (MODBUS
+# etc.) — for the Forrester demo we author healthcare-specific
+# profiles prefixed `forrester-demo-` so they coexist with anything
+# already in the tenant without collision.
+#
+# Schema:
+#   - name           profile name (must be prefixed forrester-demo-)
+#   - description    human-readable purpose
+#   - rules:         list of L4 rules
+#       - protocol   tcp | udp | icmp | any
+#       - dst_ports  port or comma list ("443", "11112,11113"); "any" allowed
+#       - src_ports  optional, defaults to "any"
+#       - action     permit | deny
+#
+# Apply order (when multiple rules): first match wins. Trailing
+# implicit deny means anything not explicitly permitted is dropped.
+
+security_profiles:
+
+  # 1. DICOM — radiology imaging modality protocol
+  - name: forrester-demo-allow-dicom
+    description: |
+      DICOM imaging protocol over TCP. Used between imaging modalities
+      and PACS / EHR archive servers.
+    rules:
+      - { protocol: tcp, dst_ports: "104,11112,11113", action: permit }
+
+  # 2. HL7 — clinical messaging (ADT, orders, results)
+  - name: forrester-demo-allow-hl7
+    description: |
+      HL7 messaging protocol over TCP. EHR servers ingest from clinical
+      sources (monitors, infusion pumps, labs).
+    rules:
+      - { protocol: tcp, dst_ports: "2575", action: permit }
+
+  # 3. HTTPS — generic management plane
+  - name: forrester-demo-allow-https
+    description: |
+      Outbound HTTPS for management traffic — EHR ↔ servers, server
+      ↔ servers, EDR-managed PCs reaching cloud telemetry.
+    rules:
+      - { protocol: tcp, dst_ports: "443", action: permit }
+
+  # 4. Clinical IoT lockdown — DNS + NTP + HTTPS only
+  - name: forrester-demo-clinical-iot
+    description: |
+      Locked-down clinical IoT egress: DNS, NTP, and HTTPS. Used for
+      patient monitors and similar devices that need cloud telemetry
+      but no other lateral access.
+    rules:
+      - { protocol: udp, dst_ports: "53",  action: permit }
+      - { protocol: udp, dst_ports: "123", action: permit }
+      - { protocol: tcp, dst_ports: "443", action: permit }
+
+  # 5. BMS Modbus — building automation control plane
+  - name: forrester-demo-bms-modbus
+    description: |
+      Modbus TCP for building management — HVAC, fire panels, BMS
+      controllers. Mirrors the CCC builder MODBUS profile.
+    rules:
+      - { protocol: tcp, dst_ports: "502", action: permit }
+
+  # 6. Allow All — trusted intra-zone (server ↔ server within trusted PG)
+  - name: forrester-demo-allow-all
+    description: |
+      Permit all traffic. Used only for self-policies on PGs that
+      represent a single trust boundary (e.g., verified-servers ↔
+      verified-servers).
+    rules:
+      - { protocol: any, dst_ports: "any", action: permit }
+
+  # 7. Deny All — explicit default-deny between segregated PGs
+  - name: forrester-demo-deny-all
+    description: |
+      Deny all traffic. Used between PGs that should not communicate
+      at all (e.g., infusion-pumps ↔ building-management).
+    rules:
+      - { protocol: any, dst_ports: "any", action: deny }
+
+  # 8. Quarantine — DNS only, deny everything else
+  - name: forrester-demo-quarantine
+    description: |
+      Quarantine egress: DNS resolution only so the device can still
+      be administered remotely; deny everything else. Default-deny
+      catches all non-DNS traffic.
+    rules:
+      - { protocol: udp, dst_ports: "53", action: permit }
+      - { protocol: any, dst_ports: "any", action: deny }

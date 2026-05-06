@@ -1,16 +1,208 @@
 ---
-# Git-tracked policy definitions.
-# Source PG references the name from policy-groups.yaml.
-# Destination PG is an existing object on the tenant (ID in group_vars/all.yml).
+# Git-tracked Policy definitions — the 8x8 segmentation matrix.
+#
+# Policy model:
+#   - direction       BIDIRECTIONAL | UNIDIRECTIONAL | SELF
+#   - source_pg       source Policy Group name
+#   - destination_pg  destination Policy Group name
+#   - security_profile L4 profile name (resolved to ID at apply time)
+#   - final_action    PERMIT | DENY  (terminal action after profile rules)
+#   - policy_set      target policy set (must be forrester-demo-*)
+#   - state           MONITOR_ONLY | MONITOR_AND_ENFORCE  (promote.yml flips on tag)
+#
+# Matrix shape (read row → column):
+#
+#                  inf  pat  img  ehr  vrf  pcs  bms  qtn
+#   inf            self DENY DENY HL7  DENY DENY DENY DENY
+#   pat            ─    self DENY HL7  DENY DENY DENY DENY
+#   img            ─    ─    self DCM  DENY DENY DENY DENY
+#   ehr            ─    ─    ─    self HTTP HTTP DENY DENY
+#   vrf            ─    ─    ─    ─    self HTTP DENY DENY
+#   pcs            ─    ─    ─    ─    ─    self DENY DENY
+#   bms            ─    ─    ─    ─    ─    ─    self DENY
+#   qtn            ─    ─    ─    ─    ─    ─    ─    self*
+#
+# All entries default to MONITOR_ONLY. Tag a release (vX.Y.Z) and
+# promote.yml flips them to MONITOR_AND_ENFORCE.
 
 policies:
-  - name: "forrester-demo-imaging > Unverified Servers Storage"
-    description: |
-      Allow imaging workstations to talk to the Unverified Servers Storage
-      group. Created in MONITOR_ONLY (simulation) — no enforcement until an
-      operator promotes it.
-    source_policy_group: forrester-demo-imaging   # by name, resolved at apply time
-    destination_policy_group_id: "{{ ccc_dest_policy_group_id }}"
-    security_profile_id:         "{{ ccc_security_profile_id }}"
-    monitor_mode: MONITOR_ONLY   # MONITOR_ONLY | MONITOR_AND_ENFORCE | MONITOR_EXTERNAL
-    mirrored: false
+
+  # ──────────────────────────────────────────────────────────────
+  # SELF POLICIES (8) — intra-PG traffic
+  # ──────────────────────────────────────────────────────────────
+
+  - name: forrester-demo-infusion-pumps-self
+    direction: SELF
+    source_pg: forrester-demo-infusion-pumps
+    destination_pg: forrester-demo-infusion-pumps
+    security_profile: forrester-demo-allow-all
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  - name: forrester-demo-patient-monitors-self
+    direction: SELF
+    source_pg: forrester-demo-patient-monitors
+    destination_pg: forrester-demo-patient-monitors
+    security_profile: forrester-demo-allow-all
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  - name: forrester-demo-imaging-self
+    direction: SELF
+    source_pg: forrester-demo-imaging
+    destination_pg: forrester-demo-imaging
+    security_profile: forrester-demo-allow-all
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  - name: forrester-demo-ehr-servers-self
+    direction: SELF
+    source_pg: forrester-demo-ehr-servers
+    destination_pg: forrester-demo-ehr-servers
+    security_profile: forrester-demo-allow-all
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  - name: forrester-demo-verified-servers-self
+    direction: SELF
+    source_pg: forrester-demo-verified-servers
+    destination_pg: forrester-demo-verified-servers
+    security_profile: forrester-demo-allow-all
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  - name: forrester-demo-defender-pcs-self
+    direction: SELF
+    source_pg: forrester-demo-defender-pcs
+    destination_pg: forrester-demo-defender-pcs
+    security_profile: forrester-demo-allow-all
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  - name: forrester-demo-building-management-self
+    direction: SELF
+    source_pg: forrester-demo-building-management
+    destination_pg: forrester-demo-building-management
+    security_profile: forrester-demo-bms-modbus
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  - name: forrester-demo-quarantine-self
+    direction: SELF
+    source_pg: forrester-demo-quarantine
+    destination_pg: forrester-demo-quarantine
+    security_profile: forrester-demo-quarantine
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  # ──────────────────────────────────────────────────────────────
+  # ALLOW WORKFLOWS (6) — explicit clinical traffic patterns
+  # ──────────────────────────────────────────────────────────────
+
+  # Infusion pumps ↔ EHR : HL7 charting (med-admin records)
+  - name: forrester-demo-infusion-pumps-to-ehr
+    direction: BIDIRECTIONAL
+    source_pg: forrester-demo-infusion-pumps
+    destination_pg: forrester-demo-ehr-servers
+    security_profile: forrester-demo-allow-hl7
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  # Patient monitors ↔ EHR : HL7 telemetry (vitals → record)
+  - name: forrester-demo-patient-monitors-to-ehr
+    direction: BIDIRECTIONAL
+    source_pg: forrester-demo-patient-monitors
+    destination_pg: forrester-demo-ehr-servers
+    security_profile: forrester-demo-allow-hl7
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  # Imaging ↔ EHR : DICOM modality-to-archive
+  - name: forrester-demo-imaging-to-ehr
+    direction: BIDIRECTIONAL
+    source_pg: forrester-demo-imaging
+    destination_pg: forrester-demo-ehr-servers
+    security_profile: forrester-demo-allow-dicom
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  # EHR ↔ verified-servers : HTTPS app/db tier
+  - name: forrester-demo-ehr-to-verified-servers
+    direction: BIDIRECTIONAL
+    source_pg: forrester-demo-ehr-servers
+    destination_pg: forrester-demo-verified-servers
+    security_profile: forrester-demo-allow-https
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  # EHR ↔ Defender PCs : HTTPS clinician thick-client access
+  - name: forrester-demo-ehr-to-defender-pcs
+    direction: BIDIRECTIONAL
+    source_pg: forrester-demo-ehr-servers
+    destination_pg: forrester-demo-defender-pcs
+    security_profile: forrester-demo-allow-https
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  # Verified servers ↔ Defender PCs : HTTPS general server admin
+  - name: forrester-demo-verified-servers-to-defender-pcs
+    direction: BIDIRECTIONAL
+    source_pg: forrester-demo-verified-servers
+    destination_pg: forrester-demo-defender-pcs
+    security_profile: forrester-demo-allow-https
+    final_action: PERMIT
+    policy_set: forrester-demo-hospital-monitor-only
+    state: MONITOR_ONLY
+
+  # ──────────────────────────────────────────────────────────────
+  # DENY MATRIX (22) — explicit zero-trust segregation
+  # ──────────────────────────────────────────────────────────────
+
+  # Infusion-pumps row
+  - { name: forrester-demo-infusion-pumps-to-patient-monitors,    direction: BIDIRECTIONAL, source_pg: forrester-demo-infusion-pumps, destination_pg: forrester-demo-patient-monitors,    security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-infusion-pumps-to-imaging,             direction: BIDIRECTIONAL, source_pg: forrester-demo-infusion-pumps, destination_pg: forrester-demo-imaging,             security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-infusion-pumps-to-verified-servers,    direction: BIDIRECTIONAL, source_pg: forrester-demo-infusion-pumps, destination_pg: forrester-demo-verified-servers,    security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-infusion-pumps-to-defender-pcs,        direction: BIDIRECTIONAL, source_pg: forrester-demo-infusion-pumps, destination_pg: forrester-demo-defender-pcs,        security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-infusion-pumps-to-building-management, direction: BIDIRECTIONAL, source_pg: forrester-demo-infusion-pumps, destination_pg: forrester-demo-building-management, security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-infusion-pumps-to-quarantine,          direction: BIDIRECTIONAL, source_pg: forrester-demo-infusion-pumps, destination_pg: forrester-demo-quarantine,          security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+
+  # Patient-monitors row
+  - { name: forrester-demo-patient-monitors-to-imaging,             direction: BIDIRECTIONAL, source_pg: forrester-demo-patient-monitors, destination_pg: forrester-demo-imaging,             security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-patient-monitors-to-verified-servers,    direction: BIDIRECTIONAL, source_pg: forrester-demo-patient-monitors, destination_pg: forrester-demo-verified-servers,    security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-patient-monitors-to-defender-pcs,        direction: BIDIRECTIONAL, source_pg: forrester-demo-patient-monitors, destination_pg: forrester-demo-defender-pcs,        security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-patient-monitors-to-building-management, direction: BIDIRECTIONAL, source_pg: forrester-demo-patient-monitors, destination_pg: forrester-demo-building-management, security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-patient-monitors-to-quarantine,          direction: BIDIRECTIONAL, source_pg: forrester-demo-patient-monitors, destination_pg: forrester-demo-quarantine,          security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+
+  # Imaging row
+  - { name: forrester-demo-imaging-to-verified-servers,    direction: BIDIRECTIONAL, source_pg: forrester-demo-imaging, destination_pg: forrester-demo-verified-servers,    security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-imaging-to-defender-pcs,        direction: BIDIRECTIONAL, source_pg: forrester-demo-imaging, destination_pg: forrester-demo-defender-pcs,        security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-imaging-to-building-management, direction: BIDIRECTIONAL, source_pg: forrester-demo-imaging, destination_pg: forrester-demo-building-management, security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-imaging-to-quarantine,          direction: BIDIRECTIONAL, source_pg: forrester-demo-imaging, destination_pg: forrester-demo-quarantine,          security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+
+  # EHR row
+  - { name: forrester-demo-ehr-to-building-management, direction: BIDIRECTIONAL, source_pg: forrester-demo-ehr-servers, destination_pg: forrester-demo-building-management, security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-ehr-to-quarantine,          direction: BIDIRECTIONAL, source_pg: forrester-demo-ehr-servers, destination_pg: forrester-demo-quarantine,          security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+
+  # Verified-servers row
+  - { name: forrester-demo-verified-servers-to-building-management, direction: BIDIRECTIONAL, source_pg: forrester-demo-verified-servers, destination_pg: forrester-demo-building-management, security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-verified-servers-to-quarantine,          direction: BIDIRECTIONAL, source_pg: forrester-demo-verified-servers, destination_pg: forrester-demo-quarantine,          security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+
+  # Defender-PCs row
+  - { name: forrester-demo-defender-pcs-to-building-management, direction: BIDIRECTIONAL, source_pg: forrester-demo-defender-pcs, destination_pg: forrester-demo-building-management, security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+  - { name: forrester-demo-defender-pcs-to-quarantine,          direction: BIDIRECTIONAL, source_pg: forrester-demo-defender-pcs, destination_pg: forrester-demo-quarantine,          security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }
+
+  # Building-management row
+  - { name: forrester-demo-building-management-to-quarantine, direction: BIDIRECTIONAL, source_pg: forrester-demo-building-management, destination_pg: forrester-demo-quarantine, security_profile: forrester-demo-deny-all, final_action: DENY, policy_set: forrester-demo-hospital-monitor-only, state: MONITOR_ONLY }

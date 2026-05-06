@@ -1,22 +1,192 @@
 ---
-# Git-tracked policy group definition.
-# Edit me, run `make demo` again, watch the change land in CCC.
+# Git-tracked Policy Group definitions for the Forrester demo.
 #
-# This is the GitOps moment for the analyst — the source of truth lives
-# in this file, not in the CCC UI.
+# Each PG demonstrates a different real-world classification pattern,
+# combining connector-driven attributes (Armis, Medigate, Defender) with
+# core attributes (label, normalizedClass, trustAttributes) and a manual
+# label fallback. This is the multi-source / defense-in-depth model a
+# real customer would author — classification degrades gracefully and
+# grows with the connector estate.
+#
+# Schema mirrors the CCC API contract (`matchingCriteria.conditionBlocks`):
+#   - condition_blocks   — list of blocks, ORed together
+#   - conditions          — list within a block, ANDed together
+#   - operator            — EQ | NEQ | CONTAINS | NOT_CONTAINS
+#
+# Safety:
+#   - every PG is tagged with the `forrester-demo-hospital` label
+#   - every PG name is prefixed `forrester-demo-`
+#   - reconcile.py only touches objects matching BOTH conditions
+#   - existing CORK PGs are not labelled `forrester-demo-hospital`
+#     and don't carry the prefix — they are never touched
 
 policy_groups:
+
+  # 1. Infusion pumps — primary signal: medical-device CPS connector
+  - name: forrester-demo-infusion-pumps
+    description: |
+      Network-attached IV infusion pumps. Multi-source classification:
+      Armis device-type primary, Medigate fallback, manual label as
+      escape hatch for new pump models the connectors haven't catalogued
+      yet.
+    type: DYNAMIC
+    security_level: 3        # IEC 62443 SL-3
+    auto_lock_devices: false
+    labels: [forrester-demo-hospital]
+    match:
+      condition_blocks:
+        # Primary: Armis CPS classification + Elisity normalized class
+        - conditions:
+            - { attribute: armis.deviceType, operator: EQ, values: ["Infusion Pump"] }
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Medical Device"] }
+        # Secondary: Medigate device class
+        - conditions:
+            - { attribute: medigate.deviceClass, operator: EQ, values: ["Infusion Pump"] }
+        # Manual override: ops-tagged for new models
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["forrester-demo-infusion-pump"] }
+
+  # 2. Patient monitors — bedside vitals + telemetry devices
+  - name: forrester-demo-patient-monitors
+    description: |
+      Bedside patient monitoring devices (vitals, telemetry, neonatal).
+      Two CPS connectors give overlapping coverage; manual label fills
+      gaps for unique gear.
+    type: DYNAMIC
+    security_level: 3
+    auto_lock_devices: false
+    labels: [forrester-demo-hospital]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: armis.deviceType, operator: EQ, values: ["Patient Monitor", "Vital Signs Monitor", "Neonatal Monitor"] }
+        - conditions:
+            - { attribute: medigate.deviceClass, operator: EQ, values: ["Patient Devices"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["forrester-demo-patient-monitor"] }
+
+  # 3. Imaging — modalities + acquisition workstations
   - name: forrester-demo-imaging
     description: |
-      Imaging workstations classified by hostname pattern.
-      Created from a Git-tracked YAML file via Ansible — no UI clicks.
+      Imaging modalities (CT, MR, X-ray) and their acquisition
+      workstations. CPS connectors classify by device-class; manual
+      label catches unique on-prem rigs.
     type: DYNAMIC
-    security_level: 3   # IEC 62443 SL-3
+    security_level: 3
     auto_lock_devices: false
+    labels: [forrester-demo-hospital]
     match:
-      attribute: core.hostname
-      operator: CONTAINS
-      match_values:
-        - IMAGING
-        - PACS
+      condition_blocks:
+        - conditions:
+            - { attribute: medigate.deviceClass, operator: EQ, values: ["Imaging"] }
+        - conditions:
+            - { attribute: armis.deviceType, operator: EQ, values: ["Imaging System"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["forrester-demo-imaging"] }
 
+  # 4. EHR servers — manual label gated by ServiceNow CMDB trust
+  - name: forrester-demo-ehr-servers
+    description: |
+      Electronic Health Record servers (Epic, Cerner, etc.). EHR
+      identity is business-context — operators tag with the EHR
+      label, but only servers known to ServiceNow CMDB qualify.
+      Demonstrates label + CMDB trust gating.
+    type: DYNAMIC
+    security_level: 3
+    auto_lock_devices: false
+    labels: [forrester-demo-hospital]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["forrester-demo-ehr"] }
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
+
+  # 5. Verified servers — server class AND (ServiceNow CMDB OR EDR-known)
+  #
+  # Logical model: normalizedClass=Server AND (
+  #     trust CONTAINS "Known in ServiceNow"
+  #   OR trust CONTAINS "Known in CrowdStrike"
+  #   OR trust CONTAINS "Known in Microsoft Defender"
+  # )
+  #
+  # The API operator model is OR-of-AND blocks, so we expand the
+  # disjunction into three blocks, each AND-ing the server class with
+  # one trust-source. A server qualifies if ANY of the three trust
+  # signals confirms it AND the asset class is server.
+  - name: forrester-demo-verified-servers
+    description: |
+      Server appliances and storage that are corroborated by either
+      ServiceNow CMDB or an EDR (CrowdStrike or Microsoft Defender).
+      Multi-source trust composition — a server qualifies when the
+      asset class is right AND at least one independent system knows
+      about it.
+    type: DYNAMIC
+    security_level: 2
+    auto_lock_devices: false
+    labels: [forrester-demo-hospital]
+    match:
+      condition_blocks:
+        # Class AND CMDB-known
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
+        # Class AND CrowdStrike-known
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in CrowdStrike"] }
+        # Class AND Defender-known
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in Microsoft Defender"] }
+
+  # 6. Defender-onboarded PCs — EDR posture as classifier
+  - name: forrester-demo-defender-pcs
+    description: |
+      Windows PCs with Microsoft Defender for Endpoint successfully
+      onboarded. Demonstrates EDR-posture-driven classification — a
+      device only joins this PG when the EDR connector reports it
+      onboarded AND the asset class is PC.
+    type: DYNAMIC
+    security_level: 1
+    auto_lock_devices: false
+    labels: [forrester-demo-hospital]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: defender.onboardingStatus, operator: EQ, values: ["Onboarded"] }
+            - { attribute: core.normalizedClass, operator: EQ, values: ["PC"] }
+
+  # 7. Building management — BMS controllers + smart-building OT
+  - name: forrester-demo-building-management
+    description: |
+      Building automation (HVAC, BMS controllers, smart-building OT).
+      Hospital infrastructure shares the network with clinical devices
+      so segmentation is non-negotiable.
+    type: DYNAMIC
+    security_level: 3
+    auto_lock_devices: false
+    labels: [forrester-demo-hospital]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: armis.deviceType, operator: EQ, values: ["BMS Controller"] }
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Building Management"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["forrester-demo-bms"] }
+
+  # 8. Quarantine — manual label only, incident-response zone
+  - name: forrester-demo-quarantine
+    description: |
+      Quarantine zone for incident response. Devices land here only
+      when an analyst (or SOAR action) manually tags them. Default-deny
+      everything except DNS so the device can still be administered
+      remotely. Time-Based Match Criteria can auto-revert the tag.
+    type: DYNAMIC
+    security_level: 1
+    auto_lock_devices: true
+    labels: [forrester-demo-hospital]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["forrester-demo-quarantine"] }

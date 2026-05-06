@@ -1,0 +1,36 @@
+---
+# Git-tracked Policy Set + PG Label definition.
+#
+# A dedicated policy set provides the strongest isolation boundary:
+# Policies in this set only target PGs carrying the
+# `forrester-demo-hospital` label, scoped to the Hospital site. Production
+# policies (CORK pharma) live in the Default policy set and are never
+# touched by this demo.
+#
+# This file is consumed by bin/bootstrap.py — a workflow_dispatch action
+# (.github/workflows/bootstrap.yml) — which is idempotent: looks up by
+# name, creates if missing, opens an auto-PR that writes the resolved
+# IDs into inventory/group_vars/all.yml so subsequent CI runs use them.
+
+policy_set:
+  name: forrester-demo-hospital-monitor-only
+  description: |
+    Forrester demo policy set — Hospital site, monitor-only by default.
+    All policies here ship in MONITOR_ONLY simulation. Promotion to
+    MONITOR_AND_ENFORCE happens via release tag (promote.yml).
+  state: MONITOR_ONLY
+  policy_group_labels:
+    - forrester-demo-hospital
+  site_labels:
+    - Hospital              # existing site in insights-demo
+
+# PG label that scopes which Policy Groups participate in this policy
+# set. Bootstrap creates this label if missing. Every PG declared in
+# policy-groups.yaml carries this label.
+policy_group_labels:
+  - name: forrester-demo-hospital
+    description: |
+      Policy Groups owned by the Forrester GitOps demo. Used as the
+      scoping boundary for the dedicated policy set and as the safety
+      tag for reconcile.py — any PG without this label is never
+      considered for deletion.
