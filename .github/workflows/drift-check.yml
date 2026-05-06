@@ -1,17 +1,12 @@
 name: Drift Check
 
 # Hourly reconciliation: compare CCC live state against this repo's main
-# branch. If they diverge — somebody changed something in the CCC UI
-# without a PR — open or update a GitHub issue with the diff. If they're
-# in sync, close any open drift issue.
-#
-# This is the "continuous reconciliation" moment for the analyst demo —
-# the same loop GitOps tools (Argo CD, Flux) provide for Kubernetes,
-# applied to network segmentation policy.
+# branch across all 4 object types (policy set, security profiles, policy
+# groups, policies). Opens or updates a GitHub issue on drift.
 
 on:
   schedule:
-    - cron: '17 * * * *'   # hourly at :17
+    - cron: '17 * * * *'
   workflow_dispatch: {}
 
 permissions:
@@ -24,8 +19,6 @@ concurrency:
 
 jobs:
   drift:
-    # Self-hosted: see apply.yml for rationale (insights-demo not reachable
-    # from GitHub-hosted runners).
     runs-on: self-hosted
     timeout-minutes: 5
     environment: insights-demo
@@ -61,9 +54,8 @@ jobs:
             const fs = require('fs');
             const body = fs.readFileSync('/tmp/drift.md', 'utf8');
             const drifted = process.env.DRIFT_RC !== '0';
-            const title = '🔁 CCC drift detected';
+            const title = 'CCC drift detected';
 
-            // Find existing open drift issue
             const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -91,7 +83,7 @@ jobs:
               await github.rest.issues.createComment({
                 owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: existing.number,
-                body: '✅ Drift cleared — repo and CCC are back in sync. Closing.',
+                body: 'Drift cleared -- repo and CCC are back in sync. Closing.',
               });
               await github.rest.issues.update({
                 owner: context.repo.owner, repo: context.repo.repo,

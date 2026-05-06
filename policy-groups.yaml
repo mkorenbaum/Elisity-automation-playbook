@@ -1,22 +1,171 @@
 ---
-# Git-tracked policy group definition.
-# Edit me, run `make demo` again, watch the change land in CCC.
+# Git-tracked Policy Group definitions for the Forrester demo.
 #
-# This is the GitOps moment for the analyst — the source of truth lives
-# in this file, not in the CCC UI.
+# Naming: clean functional names (no FRSTR- prefix on PGs). The PG
+# Label `FORRESTER-DEMO` (separate field from the name) is the
+# invisible cleanup tag — reconcile.py only deletes PGs that carry
+# this label and aren't declared here. CORK PGs survive because they
+# don't carry the label.
+#
+# Each PG follows the same 3-OR-block classification pattern (except
+# QUARANTINE which is manual-label only):
+#
+#   Block 1: a core effective attribute (the asset-class anchor)
+#   Block 2: a connector attribute (the high-fidelity signal)
+#   Block 3: a manual core.label fallback (ops escape hatch)
+#
+# Schema mirrors the CCC API contract (matchingCriteria.conditionBlocks):
+#   - condition_blocks    list of blocks, ORed together
+#   - conditions          list within a block, ANDed together
+#   - operator            EQ | NEQ | CONTAINS | NOT_CONTAINS
 
 policy_groups:
-  - name: forrester-demo-imaging
-    description: |
-      Imaging workstations classified by hostname pattern.
-      Created from a Git-tracked YAML file via Ansible — no UI clicks.
-    type: DYNAMIC
-    security_level: 3   # IEC 62443 SL-3
-    auto_lock_devices: false
-    match:
-      attribute: core.hostname
-      operator: CONTAINS
-      match_values:
-        - IMAGING
-        - PACS
 
+  # 1. Infusion pumps — IV pumps, network-attached medical devices
+  - name: INFUSION-PUMPS
+    description: |
+      Network-attached IV infusion pumps. Three-source classification:
+      core asset-class anchor, Armis CPS signal, manual label fallback.
+    type: DYNAMIC
+    security_level: 3        # IEC 62443 SL-3
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Medical Device"] }
+        - conditions:
+            - { attribute: armis.deviceType, operator: EQ, values: ["Infusion Pump"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["INFUSION-PUMPS"] }
+
+  # 2. Patient monitors — bedside vitals + telemetry
+  - name: PATIENT-MONITORS
+    description: |
+      Bedside patient monitoring devices (vitals, telemetry, neonatal).
+      Three-source classification with Medigate CPS as the connector
+      signal.
+    type: DYNAMIC
+    security_level: 3
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Medical Device"] }
+        - conditions:
+            - { attribute: medigate.deviceClass, operator: EQ, values: ["Patient Devices"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["PATIENT-MONITORS"] }
+
+  # 3. Imaging — modalities + acquisition workstations
+  - name: IMAGING
+    description: |
+      Imaging modalities (CT, MR, X-ray) and acquisition workstations.
+      Medigate CPS classifier signals deviceClass=Imaging.
+    type: DYNAMIC
+    security_level: 3
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Medical Device"] }
+        - conditions:
+            - { attribute: medigate.deviceClass, operator: EQ, values: ["Imaging"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["IMAGING"] }
+
+  # 4. EHR servers — Epic / Cerner / etc, gated by ServiceNow CMDB trust
+  - name: EHR-SERVERS
+    description: |
+      Electronic Health Record servers. Server asset class with
+      ServiceNow CMDB trust as the connector signal; manual label
+      fallback for early-deployment edge cases.
+    type: DYNAMIC
+    security_level: 3
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+        - conditions:
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["EHR-SERVERS"] }
+
+  # 5. Verified servers — CrowdStrike-corroborated server estate
+  - name: VERIFIED-SERVERS
+    description: |
+      Server appliances corroborated by CrowdStrike EDR. The connector
+      signal is the trust attribute "Known in CrowdStrike"; manual
+      label fallback is the ops escape hatch.
+    type: DYNAMIC
+    security_level: 2
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+        - conditions:
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in CrowdStrike"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["VERIFIED-SERVERS"] }
+
+  # 6. Verified PCs — Defender-onboarded Windows endpoints
+  - name: VERIFIED-PCS
+    description: |
+      Windows PCs corroborated by Microsoft Defender for Endpoint. PC
+      asset class with Defender as the connector trust signal; manual
+      label fallback for clinician laptops awaiting EDR enrolment.
+    type: DYNAMIC
+    security_level: 1
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["PC"] }
+        - conditions:
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in Microsoft Defender"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["VERIFIED-PCS"] }
+
+  # 7. Building management — BMS controllers + smart-building OT
+  - name: BUILDING-MANAGEMENT
+    description: |
+      Building automation (HVAC, BMS controllers, smart-building OT).
+      Building Management asset class anchors; Armis CPS classifier
+      signals BMS Controller; manual label fallback.
+    type: DYNAMIC
+    security_level: 3
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Building Management"] }
+        - conditions:
+            - { attribute: armis.deviceType, operator: EQ, values: ["BMS Controller"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["BUILDING-MANAGEMENT"] }
+
+  # 8. Isolation — manual-label only, incident-response zone (named ISOLATION to avoid collision with built-in CCC "Quarantine" PG)
+  #    Intentionally a single block (no core/connector blocks): a
+  #    device only lands here when an analyst or SOAR action explicitly
+  #    tags it. Time-Based Match Criteria can auto-revert the tag.
+  - name: ISOLATION
+    description: |
+      Quarantine zone for incident response. Devices land here only
+      via explicit tagging. DNS-only egress profile, deny everything
+      else. Time-Based Match Criteria auto-reverts.
+    type: DYNAMIC
+    security_level: 1
+    auto_lock_devices: true
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["QUARANTINE"] }

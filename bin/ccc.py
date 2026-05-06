@@ -56,6 +56,40 @@ def _read_secret(arg: str) -> str:
     return arg
 
 
+def _normalize(text: str, content_type: str) -> str:
+    """Normalize NDJSON list responses into a {"content": [...]} envelope.
+
+    CCC's v1 endpoints respond with `application/x-ndjson`:
+      - List endpoints (policy-sets GET, policy-group-label GET,
+        security-profiles GET) emit one JSON OBJECT per line.
+      - POST create endpoints emit a single JSON STRING — just the
+        new object's UUID, e.g. `"1144aff7-f39c-..."`.
+
+    For list responses we wrap into the v2-style content envelope so
+    callers can `.get("content", [])` consistently. For POST responses
+    that emit a primitive (string/number/bool), we pass through
+    unchanged so the caller sees the UUID directly.
+    """
+    if "ndjson" not in content_type:
+        return text
+    lines = [l for l in text.split("\n") if l.strip()]
+    if not lines:
+        return text
+    # If the first line is a JSON primitive (UUID-as-string from POST),
+    # pass through — the caller wants the value as-is.
+    first = lines[0].lstrip()
+    if first[:1] in ('"', "-") or first[:1].isdigit() or first in ("null", "true", "false"):
+        return text
+    # Otherwise: NDJSON of objects — wrap as content envelope.
+    items = []
+    for line in lines:
+        try:
+            items.append(json.loads(line))
+        except json.JSONDecodeError:
+            return text
+    return json.dumps({"content": items})
+
+
 def cmd_token(args: argparse.Namespace) -> int:
     secret = _read_secret(args.client_secret)
     body = urllib.parse.urlencode({
@@ -95,7 +129,11 @@ def cmd_token(args: argparse.Namespace) -> int:
 
 
 def cmd_call(args: argparse.Namespace) -> int:
-    headers = {"Accept": "application/json"}
+    # CCC v1 endpoints (policy-sets, policy-group-label, security-profiles)
+    # respond 406 Not Acceptable to "Accept: application/json" because the
+    # server-side content negotiation does not advertise that exact subtype.
+    # "*/*" is the working accept header for both v1 and v2 routes.
+    headers = {"Accept": "*/*"}
     if args.token:
         headers["Authorization"] = f"Bearer {args.token}"
 
@@ -113,12 +151,16 @@ def cmd_call(args: argparse.Namespace) -> int:
     req = urllib.request.Request(args.url, data=body, method=args.method, headers=headers)
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx(), timeout=60) as resp:
-            sys.stdout.write(resp.read().decode("utf-8"))
+            text = resp.read().decode("utf-8")
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            sys.stdout.write(_normalize(text, ctype))
             return 0
     except urllib.error.HTTPError as e:
         if e.code in accept:
             try:
-                sys.stdout.write(e.read().decode("utf-8"))
+                err_text = e.read().decode("utf-8")
+                err_ctype = (e.headers.get("Content-Type") or "").lower() if hasattr(e, "headers") else ""
+                sys.stdout.write(_normalize(err_text, err_ctype))
             except Exception:
                 pass
             return 0

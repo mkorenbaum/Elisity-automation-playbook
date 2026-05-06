@@ -1,0 +1,38 @@
+---
+# Git-tracked Policy Set + PG Label definition.
+#
+# Naming convention:
+#   - Policy Set name carries the FRSTR- prefix (no PG-label mechanism
+#     for policy sets, so the prefix is the only safety boundary).
+#   - The PG Label `FORRESTER-DEMO` is the invisible cleanup tag for
+#     all Policy Groups managed by this demo. Functional PG names stay
+#     clean (INFUSION-PUMPS, IMAGING, etc.) because the label is the
+#     scoping mechanism, not the name.
+#   - Site label `Hospital` is the existing site on insights-demo.
+#
+# Bootstrap creates these idempotently from a workflow_dispatch action
+# in .github/workflows/bootstrap.yml. After creation it auto-PRs the
+# resolved IDs into inventory/group_vars/all.yml.
+
+policy_set:
+  name: FRSTR-HOSPITAL-MONITOR-ONLY
+  description: |
+    Forrester demo policy set, Hospital site, monitor-only by default.
+    Promotion to MONITOR_AND_ENFORCE happens via release tag.
+  state: MONITOR_ONLY
+  policy_group_labels:
+    - FORRESTER-DEMO
+  site_labels:
+    - Hospital              # existing site on insights-demo
+
+# PG label that scopes which Policy Groups participate in this demo.
+# This is the invisible cleanup tag: a PG carries the FORRESTER-DEMO
+# label, but its name (e.g. INFUSION-PUMPS) is unprefixed and reads
+# cleanly in the policy matrix and CCC UI.
+policy_group_labels:
+  - name: FORRESTER-DEMO
+    description: |
+      Marker label for Policy Groups owned by the Forrester GitOps
+      demo. Used both as the policy-set scoping boundary and as the
+      reconcile.py safety tag. Any PG without this label is never
+      considered for deletion.

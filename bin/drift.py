@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """
-drift.py — detect drift between Git source-of-truth and live CCC state.
+drift.py — detect drift between Git source-of-truth and live CCC state
+across all 4 object types.
 
-Triggered hourly by .github/workflows/drift-check.yml. For every Policy
-Group and Policy declared in this repo:
-  - Does the corresponding object exist in CCC?
-  - Do the relevant fields (security level, match criteria, monitor mode,
-    description) match?
+Triggered hourly by .github/workflows/drift-check.yml. Checks:
+  1. Policy Set     — exists, state matches
+  2. Security Profiles — exist, rule sets match
+  3. Policy Groups  — exist, condition blocks + security level match
+  4. Policies       — exist, src/dst/SP/mode match
 
-Exits 0 with "no drift" markdown when everything matches, exit 1 with a
-report when drift is detected. The workflow opens / updates a GitHub
-issue based on the exit code.
+Exits 0 with "no drift" markdown when everything matches, exit 1 when
+drift is detected. The workflow opens/updates a GitHub issue accordingly.
 """
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,14 +25,11 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CCC_PY = REPO_ROOT / "bin" / "ccc.py"
 
+PROTOCOL_MAP = {"tcp": 6, "udp": 17, "icmp": 1, "any": None}
+
 
 def load_creds() -> dict[str, str]:
     with open(REPO_ROOT / "creds.yml") as f:
-        return yaml.safe_load(f)
-
-
-def load_group_vars() -> dict[str, Any]:
-    with open(REPO_ROOT / "inventory" / "group_vars" / "all.yml") as f:
         return yaml.safe_load(f)
 
 
@@ -64,98 +60,167 @@ def ccc_get(creds: dict[str, str], token: str, path: str) -> Any:
         return None
 
 
-def declared_pg_signature(pg: dict[str, Any]) -> dict[str, Any]:
-    """Pull the fields we control from the YAML declaration."""
+# ── Signature extraction for comparison ──────────────────────────
+
+def declared_pg_signature(pg: dict) -> dict:
+    """Extract comparable fields from a YAML PG declaration."""
+    blocks = []
+    for block in pg.get("match", {}).get("condition_blocks", []):
+        conds = []
+        for c in block.get("conditions", []):
+            conds.append({
+                "attr": c["attribute"],
+                "op": c["operator"],
+                "vals": sorted(c["values"]),
+            })
+        blocks.append(sorted(conds, key=lambda x: x["attr"]))
     return {
-        "policyGroupType": pg.get("type", "DYNAMIC"),
+        "type": pg.get("type", "DYNAMIC"),
         "securityLevel": pg.get("security_level"),
-        "match_attribute": pg["match"]["attribute"],
-        "match_operator": pg["match"]["operator"],
-        "match_values": sorted(pg["match"]["match_values"]),
+        "conditionBlocks": blocks,
     }
 
 
-def live_pg_signature(live: dict[str, Any]) -> dict[str, Any]:
+def live_pg_signature(live: dict) -> dict:
+    """Extract comparable fields from a live CCC PG."""
     crit = live.get("matchingCriteria", {}) or {}
-    cond_blocks = crit.get("conditionBlocks", [])
-    if cond_blocks and cond_blocks[0].get("conditions"):
-        c0 = cond_blocks[0]["conditions"][0]
-        match_attr = c0.get("attributeFqdn")
-        match_op = c0.get("operator")
-        match_vals = sorted(c0.get("value", []))
-    else:
-        match_attr = match_op = None
-        match_vals = []
+    blocks = []
+    for block in crit.get("conditionBlocks", []):
+        conds = []
+        for c in block.get("conditions", []):
+            conds.append({
+                "attr": c.get("attributeFqdn", ""),
+                "op": c.get("operator", ""),
+                "vals": sorted(c.get("value", [])),
+            })
+        blocks.append(sorted(conds, key=lambda x: x["attr"]))
     return {
-        "policyGroupType": live.get("policyGroupType"),
+        "type": live.get("policyGroupType"),
         "securityLevel": live.get("securityLevel"),
-        "match_attribute": match_attr,
-        "match_operator": match_op,
-        "match_values": match_vals,
+        "conditionBlocks": blocks,
     }
 
 
-def resolve_var(value: Any, group_vars: dict[str, Any]) -> Any:
-    """Substitute `{{ ccc_* }}` Jinja-style references with values from group_vars.
-    Strict-but-tiny: only handles a single var reference per string. Good
-    enough for the demo YAML; not a full templating engine."""
-    if not isinstance(value, str):
-        return value
-    s = value.strip()
-    if s.startswith("{{") and s.endswith("}}"):
-        name = s[2:-2].strip()
-        return group_vars.get(name, value)
-    return value
+def declared_sp_signature(sp: dict) -> list[dict]:
+    """Extract comparable rule set from YAML SP."""
+    rules = []
+    for r in sp.get("rules", []):
+        proto = PROTOCOL_MAP.get(r.get("protocol", "any").lower())
+        dst = r.get("dst_ports", "any")
+        rules.append({
+            "protocol": proto,
+            "dst": None if dst == "any" else str(dst),
+            "permit": r.get("action", "permit").lower() == "permit",
+        })
+    return rules
 
 
-def declared_policy_signature(p: dict[str, Any], gv: dict[str, Any]) -> dict[str, Any]:
+def live_sp_signature(live: dict) -> list[dict]:
+    """Extract comparable rule set from live CCC SP."""
+    rules = []
+    for entry in live.get("ruleSet", []):
+        prop = entry.get("property", {})
+        rules.append({
+            "protocol": prop.get("protocol"),
+            "dst": prop.get("destinationPorts"),
+            "permit": prop.get("permit", True),
+        })
+    return rules
+
+
+def declared_policy_signature(p: dict) -> dict:
     return {
-        "monitorMode": p.get("monitor_mode"),
-        "src": p.get("source_policy_group"),
-        "dst_id": resolve_var(p.get("destination_policy_group_id"), gv),
+        "state": p.get("state", "MONITOR_ONLY"),
+        "src": p.get("source_pg"),
+        "dst": p.get("destination_pg"),
+        "sp": p.get("security_profile"),
+        "direction": p.get("direction", "BIDIRECTIONAL"),
     }
 
 
-def live_policy_signature(p: dict[str, Any]) -> dict[str, Any]:
+def live_policy_signature(p: dict, pg_id_to_name: dict, sp_id_to_name: dict) -> dict:
+    is_mirrored = p.get("isMirrored", False)
+    src_name = p.get("srcPolicyGroupName", "")
+    dst_id = p.get("dstPolicyGroupId", "")
+    dst_name = pg_id_to_name.get(dst_id, dst_id)
+
+    sp_ids = p.get("securityProfiles", [])
+    sp_name = sp_id_to_name.get(sp_ids[0], sp_ids[0]) if sp_ids else ""
+
+    if src_name == dst_name:
+        direction = "SELF"
+    elif is_mirrored:
+        direction = "BIDIRECTIONAL"
+    else:
+        direction = "UNIDIRECTIONAL"
+
     return {
-        "monitorMode": p.get("monitorMode"),
-        "src": p.get("srcPolicyGroupName"),
-        "dst_id": p.get("dstPolicyGroupId"),
+        "state": p.get("monitorMode", "MONITOR_ONLY"),
+        "src": src_name,
+        "dst": dst_name,
+        "sp": sp_name,
+        "direction": direction,
     }
 
 
 def main() -> int:
     creds = load_creds()
-    gv = load_group_vars()
-    policy_set_id = gv["ccc_policy_set_id"]
+    token = get_token(creds)
 
+    # Load all YAML declarations
+    ps_doc = yaml.safe_load((REPO_ROOT / "policy-set.yaml").read_text()) or {}
+    sp_doc = yaml.safe_load((REPO_ROOT / "security-profiles.yaml").read_text()) or {}
     pg_doc = yaml.safe_load((REPO_ROOT / "policy-groups.yaml").read_text()) or {}
     pol_doc = yaml.safe_load((REPO_ROOT / "policies.yaml").read_text()) or {}
+
+    declared_ps = ps_doc.get("policy_set", {})
+    declared_sps = sp_doc.get("security_profiles", [])
     declared_pgs = pg_doc.get("policy_groups", [])
     declared_policies = pol_doc.get("policies", [])
 
-    token = get_token(creds)
-
-    # Fetch live state (best-effort)
-    pg_listing = ccc_get(creds, token, "/api/policy/v2/policy-groups?size=500") or {}
-    live_pgs_by_name = {p["name"]: p for p in pg_listing.get("content", [])}
-
-    pol_listing = ccc_get(
-        creds, token,
-        f"/api/policy/v1/policy-sets/{policy_set_id}/policies?size=1000",
-    ) or {}
-    live_pols_by_name = {p["name"]: p for p in pol_listing.get("content", [])}
-
     drift_rows: list[str] = []
 
-    # Policy Groups
+    # ── 1. Policy Set ────────────────────────────────────────────
+    ps_listing = ccc_get(creds, token, "/api/policy/v1/policy-sets") or {}
+    live_ps = None
+    ps_id = None
+    for item in ps_listing.get("content", []):
+        if item["name"] == declared_ps.get("name"):
+            live_ps = item
+            ps_id = item["id"]
+            break
+    if declared_ps.get("name") and not live_ps:
+        drift_rows.append(f"| Policy Set | `{declared_ps['name']}` | declared in repo, **missing in CCC** |")
+
+    # ── 2. Security Profiles ─────────────────────────────────────
+    sp_listing = ccc_get(creds, token, "/api/policy/v1/security-profiles") or {}
+    sp_items = sp_listing.get("content", []) if isinstance(sp_listing, dict) else sp_listing
+    live_sps_by_name = {sp["name"]: sp for sp in sp_items}
+    sp_id_to_name = {sp["id"]: sp["name"] for sp in sp_items}
+
+    for sp in declared_sps:
+        name = sp["name"]
+        live = live_sps_by_name.get(name)
+        if not live:
+            drift_rows.append(f"| Security Profile | `{name}` | declared in repo, **missing in CCC** |")
+            continue
+        decl_sig = declared_sp_signature(sp)
+        live_sig = live_sp_signature(live)
+        if decl_sig != live_sig:
+            drift_rows.append(f"| Security Profile | `{name}` | rule set differs |")
+
+    # ── 3. Policy Groups ─────────────────────────────────────────
+    pg_listing = ccc_get(creds, token, "/api/policy/v2/policy-groups?size=500") or {}
+    live_pgs_by_name = {p["name"]: p for p in pg_listing.get("content", [])}
+    pg_id_to_name = {p["id"]: p["name"] for p in pg_listing.get("content", [])}
+
     for pg in declared_pgs:
         name = pg["name"]
         live = live_pgs_by_name.get(name)
         if not live:
             drift_rows.append(f"| Policy Group | `{name}` | declared in repo, **missing in CCC** |")
             continue
-        # Need the full PG (matchingCriteria isn't in the listing)
+        # Fetch full PG detail for matchingCriteria
         full = ccc_get(creds, token, f"/api/policy/v2/policy-groups/{live['id']}")
         if not full:
             drift_rows.append(f"| Policy Group | `{name}` | could not fetch detail |")
@@ -164,44 +229,52 @@ def main() -> int:
         live_sig = live_pg_signature(full)
         if decl_sig != live_sig:
             for k in decl_sig:
-                if decl_sig[k] != live_sig[k]:
+                if decl_sig[k] != live_sig.get(k):
                     drift_rows.append(
-                        f"| Policy Group | `{name}` | "
-                        f"`{k}`: repo=`{decl_sig[k]}` ≠ live=`{live_sig[k]}` |"
+                        f"| Policy Group | `{name}` | `{k}`: repo != live |"
                     )
 
-    # Policies
-    for p in declared_policies:
-        name = p["name"]
-        live = live_pols_by_name.get(name)
-        if not live:
-            drift_rows.append(f"| Policy | `{name}` | declared in repo, **missing in CCC** |")
-            continue
-        decl_sig = declared_policy_signature(p, gv)
-        live_sig = live_policy_signature(live)
-        # Allow MONITOR_AND_ENFORCE if repo says MONITOR_ONLY (post-promotion)
-        if decl_sig["monitorMode"] == "MONITOR_ONLY" and live_sig["monitorMode"] == "MONITOR_AND_ENFORCE":
-            decl_sig["monitorMode"] = "MONITOR_AND_ENFORCE"
-        if decl_sig != live_sig:
-            for k in decl_sig:
-                if decl_sig[k] != live_sig[k]:
-                    drift_rows.append(
-                        f"| Policy | `{name}` | "
-                        f"`{k}`: repo=`{decl_sig[k]}` ≠ live=`{live_sig[k]}` |"
-                    )
+    # ── 4. Policies ──────────────────────────────────────────────
+    if ps_id:
+        pol_listing = ccc_get(
+            creds, token,
+            f"/api/policy/v1/policy-sets/{ps_id}/policies?size=1000",
+        ) or {}
+        live_pols_by_name = {p["name"]: p for p in pol_listing.get("content", [])}
 
-    print("## 🔁 Drift Check — Git source-of-truth vs CCC live state")
+        for p in declared_policies:
+            name = p["name"]
+            live = live_pols_by_name.get(name)
+            if not live:
+                drift_rows.append(f"| Policy | `{name}` | declared in repo, **missing in CCC** |")
+                continue
+            decl_sig = declared_policy_signature(p)
+            live_sig = live_policy_signature(live, pg_id_to_name, sp_id_to_name)
+            # Allow MONITOR_AND_ENFORCE if repo says MONITOR_ONLY (post-promotion)
+            if decl_sig["state"] == "MONITOR_ONLY" and live_sig["state"] == "MONITOR_AND_ENFORCE":
+                decl_sig["state"] = "MONITOR_AND_ENFORCE"
+            if decl_sig != live_sig:
+                for k in decl_sig:
+                    if decl_sig[k] != live_sig.get(k):
+                        drift_rows.append(
+                            f"| Policy | `{name}` | `{k}`: repo=`{decl_sig[k]}` != live=`{live_sig.get(k)}` |"
+                        )
+
+    # ── Report ───────────────────────────────────────────────────
+    print("## Drift Check -- Git source-of-truth vs CCC live state")
     print()
     print(f"_Tenant: `{creds['ccc_url']}`. Time: GitHub Action run._")
     print()
     if not drift_rows:
-        print("> ✅ **No drift.** CCC is in sync with `main`.")
+        print("> No drift. CCC is in sync with `main`.")
         print()
+        print(f"- Policy Set: `{declared_ps.get('name', 'N/A')}`")
+        print(f"- Security Profiles checked: {len(declared_sps)}")
         print(f"- Policy Groups checked: {len(declared_pgs)}")
         print(f"- Policies checked: {len(declared_policies)}")
         return 0
 
-    print(f"> ⚠️ **Drift detected** in {len(drift_rows)} field(s).")
+    print(f"> Drift detected in {len(drift_rows)} field(s).")
     print()
     print("| Object | Name | Drift |")
     print("|---|---|---|")
@@ -211,9 +284,8 @@ def main() -> int:
     print("**To resolve:**")
     print("- If the live tenant change was intentional, update this repo "
           "(open a PR with the new YAML) so the source-of-truth catches up.")
-    print("- If the live tenant change was unintentional, manually re-run "
-          "the `apply` workflow (or run `make demo` locally) to push the "
-          "repo state back to CCC.")
+    print("- If the live tenant change was unintentional, re-run "
+          "the `apply` workflow to push the repo state back to CCC.")
     return 1
 
 

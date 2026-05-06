@@ -1,0 +1,92 @@
+---
+# Git-tracked Security Profile definitions.
+#
+# Security Profiles define the L4 rule set a Policy applies. CCC has
+# no labelling/tagging mechanism for SPs, so the FRSTR- name prefix
+# is the cleanup boundary — reconcile.py only deletes SPs whose name
+# starts with FRSTR- AND are not declared here.
+#
+# Schema:
+#   - name           profile name (must be FRSTR- prefixed)
+#   - description    human-readable purpose
+#   - rules:         list of L4 rules
+#       - protocol   tcp | udp | icmp | any
+#       - dst_ports  port or comma list ("443", "11112,11113"); "any" allowed
+#       - src_ports  optional, defaults to "any"
+#       - action     permit | deny
+#
+# CCC encodings (per elisity-api-expert skill, gotcha G4):
+#   - protocol -1 = any (NEVER omit; default 0 is rejected)
+#   - sourcePorts/destinationPorts always required ("Any" wildcard)
+#   - comma-separated ports get split into separate ruleSet entries
+
+security_profiles:
+
+  # 1. DICOM — radiology imaging modality protocol
+  - name: FRSTR-ALLOW-DICOM
+    description: |
+      DICOM imaging protocol over TCP. Used between imaging modalities
+      and PACS / EHR archive servers.
+    rules:
+      - { protocol: tcp, dst_ports: "104,11112,11113", action: permit }
+
+  # 2. HL7 — clinical messaging (ADT, orders, results)
+  - name: FRSTR-ALLOW-HL7
+    description: |
+      HL7 messaging protocol over TCP. EHR servers ingest from clinical
+      sources (monitors, infusion pumps, labs).
+    rules:
+      - { protocol: tcp, dst_ports: "2575", action: permit }
+
+  # 3. HTTPS — generic management plane
+  - name: FRSTR-ALLOW-HTTPS
+    description: |
+      Outbound HTTPS for management traffic, EHR-to-server lateral,
+      EDR-managed PCs reaching cloud telemetry.
+    rules:
+      - { protocol: tcp, dst_ports: "443", action: permit }
+
+  # 4. Clinical IoT lockdown — DNS + NTP + HTTPS only
+  - name: FRSTR-CLINICAL-IOT
+    description: |
+      Locked-down clinical IoT egress: DNS, NTP, and HTTPS. Used for
+      patient monitors and similar devices that need cloud telemetry
+      but no other lateral access.
+    rules:
+      - { protocol: udp, dst_ports: "53",  action: permit }
+      - { protocol: udp, dst_ports: "123", action: permit }
+      - { protocol: tcp, dst_ports: "443", action: permit }
+
+  # 5. BMS Modbus — building automation control plane
+  - name: FRSTR-BMS-MODBUS
+    description: |
+      Modbus TCP for building management — HVAC, fire panels, BMS
+      controllers.
+    rules:
+      - { protocol: tcp, dst_ports: "502", action: permit }
+
+  # 6. Allow All — full-mesh permit (trusted intra-zone)
+  - name: FRSTR-ALLOW-ALL
+    description: |
+      Permit all traffic. Used for self-policies on PGs that represent
+      a single trust boundary, and for permit-all cross-PG cells where
+      two trusted infrastructure zones need full-mesh communication.
+    rules:
+      - { protocol: any, dst_ports: "any", action: permit }
+
+  # 7. Deny All — explicit default-deny between segregated PGs
+  - name: FRSTR-DENY-ALL
+    description: |
+      Deny all traffic. Used between PGs that should not communicate
+      at all (e.g., infusion-pumps to building-management).
+    rules:
+      - { protocol: any, dst_ports: "any", action: deny }
+
+  # 8. Quarantine — DNS only, deny everything else
+  - name: FRSTR-QUARANTINE
+    description: |
+      Quarantine egress: DNS resolution only so the device can still
+      be administered remotely; deny everything else.
+    rules:
+      - { protocol: udp, dst_ports: "53", action: permit }
+      - { protocol: any, dst_ports: "any", action: deny }

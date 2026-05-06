@@ -1,16 +1,17 @@
 name: Apply to CCC
 
-# Runs on every push to main that touches policy YAML. Applies the
-# declared state to the live CCC tenant in MONITOR_ONLY (simulation)
-# mode. New policies do NOT enforce until a release tag is published
-# (see promote.yml).
+# Runs on every push to main that touches policy YAML or tooling.
+# Applies declared state to the live CCC tenant in MONITOR_ONLY.
 #
-# The "merge IS the deployment" moment for the analyst demo.
+# Dependency order: policy-set -> security-profiles -> policy-groups -> policies
+# Each later step needs the earlier objects to exist.
 
 on:
   push:
     branches: [main]
     paths:
+      - 'policy-set.yaml'
+      - 'security-profiles.yaml'
       - 'policy-groups.yaml'
       - 'policies.yaml'
       - 'inventory/group_vars/all.yml'
@@ -29,16 +30,13 @@ concurrency:
 
 jobs:
   apply:
-    # Self-hosted: insights-demo lives on Elisity's internal network and
-    # is unreachable from GitHub's public-IP runners. The runner installed
-    # on Mike's lab host (10.0.0.175) routes to the tenant directly.
     runs-on: self-hosted
     timeout-minutes: 10
-    environment: insights-demo   # protects the secret + provides the audit trail
+    environment: insights-demo
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # enough to resolve the merge commit's PR
+          fetch-depth: 2
 
       - name: Ensure ansible + PyYAML are installed
         run: |
@@ -46,7 +44,7 @@ jobs:
           /tmp/forrester-venv/bin/pip install --quiet --upgrade ansible PyYAML
           echo "/tmp/forrester-venv/bin" >> "$GITHUB_PATH"
 
-      - name: Apply YAML to CCC
+      - name: Apply YAML to CCC (dependency order)
         env:
           CCC_URL: ${{ secrets.CCC_URL }}
           CCC_CLIENT_ID: ${{ secrets.CCC_CLIENT_ID }}
@@ -56,18 +54,14 @@ jobs:
           make ci-apply 2>&1 | tee /tmp/apply.log
 
       - name: Reconcile — delete CCC orphans no longer declared in YAML
-        # This step makes apply two-way: removing a YAML entry now
-        # actually deletes the corresponding object from CCC. Scoped
-        # to the forrester-demo- prefix — production policies are
-        # never at risk.
         run: |
-          python3 bin/reconcile.py "forrester-demo-" 2>&1 | tee /tmp/reconcile.md
+          python3 bin/reconcile.py 2>&1 | tee /tmp/reconcile.md
 
       - name: Build apply summary
         if: always()
         run: |
           {
-            echo "## 🚀 Applied to Elisity (\`MONITOR_ONLY\`)"
+            echo "## Applied to Elisity (\`MONITOR_ONLY\`)"
             echo
             echo "Source-of-truth this run:  \`${{ github.sha }}\`"
             echo "Tenant: \`${{ secrets.CCC_URL }}\`"

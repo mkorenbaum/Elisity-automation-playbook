@@ -1,0 +1,23 @@
+---
+# Apply policy-set.yaml to CCC. Creates the dedicated policy set if
+# missing. Delegates all logic to bin/apply_policy_set.py.
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[apply] Policy Set from policy-set.yaml"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+  tasks:
+    - name: Apply policy set
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../bin/apply_policy_set.py"
+      register: apply_ps_result
+      changed_when: "'created' in apply_ps_result.stdout"
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "{{ apply_ps_result.stdout }}"

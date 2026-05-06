@@ -1,37 +1,29 @@
 ---
 # Shared facts for all plays.
 #
-# These IDs are tenant-specific and were captured from insights-demo on 2026-05-02.
-# If you re-target a different CCC tenant, run `make discover` to refresh them.
+# These IDs are tenant-specific and were captured from insights-demo.
+# If you re-target a different CCC tenant, run `make bootstrap` to
+# refresh them.
 
-# Existing destination Policy Group used by the demo policy.
-# "Unverified Servers Storage" exists out-of-the-box on insights-demo.
-ccc_dest_policy_group_id:   "316cc4fd-98f5-4f82-b7e8-58bd20a24353"
-ccc_dest_policy_group_name: "Unverified Servers Storage"
+# ── v2 policy set (created by bootstrap) ─────────────────────────
+# After running bootstrap.yml, update these with the resolved IDs
+# printed by bootstrap.py.
+ccc_policy_set_name: "FRSTR-HOSPITAL-MONITOR-ONLY"
+ccc_policy_set_id:   "fc2ab478-bd3b-4732-9e8f-5238dee17dca"                        # set after bootstrap
 
-# Default Policy Set (no production policies — safe scratchpad).
-ccc_policy_set_id:   "ea9e9ec2-cffc-433a-8b68-4ba5969a8be6"
-ccc_policy_set_name: "Default"
+# PG label created by bootstrap — scopes which PGs participate in
+# the demo policy set.
+ccc_pg_label_name: "FORRESTER-DEMO"
+ccc_pg_label_id:   "6a962be9-2c66-407c-b100-f28b8b08ca4a"                          # set after bootstrap
 
-# Built-in "Allow All" Security Profile.
+# ── legacy IDs (still used by promote.py) ────────────────────────
+# Built-in "Allow All" Security Profile — used as the fallback in
+# promote.py for the finalAction field.
 ccc_security_profile_id:   "97e9e16d-8a9d-41a1-9b3b-5fb92165b08e"
 ccc_security_profile_name: "Allow All"
 
-# Default Policy Group label (required on every PG create).
-ccc_default_label_id: "1776091f-81a0-4382-aa7b-8be7284e6397"
-
-# Demo state (created/torn down by the playbooks).
-demo_pg_name:     "forrester-demo-imaging"
-demo_policy_name: "{{ demo_pg_name }} > {{ ccc_dest_policy_group_name }}"
-
-# Where the playbooks persist created object IDs between runs.
-state_file: "{{ playbook_dir }}/../.state.json"
-
-# urllib defaults.
+# ── urllib defaults ──────────────────────────────────────────────
 ccc_validate_certs: false
 
-# Normalized base URL (strips any trailing slashes from ccc_url so that
-# concatenations like "{{ ccc_base }}/auth/..." don't yield "//auth/...").
-# Lazily evaluated, so it picks up whatever ccc_url is set to in creds.yml
-# at play time.
+# Normalized base URL (strips trailing slashes from ccc_url).
 ccc_base: "{{ ccc_url | regex_replace('/+$', '') }}"

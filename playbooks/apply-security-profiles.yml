@@ -1,0 +1,23 @@
+---
+# Apply security-profiles.yaml to CCC. Creates security profiles that
+# don't exist yet. Delegates all logic to bin/apply_security_profiles.py.
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[apply] Security Profiles from security-profiles.yaml"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+  tasks:
+    - name: Apply security profiles
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../bin/apply_security_profiles.py"
+      register: apply_sp_result
+      changed_when: "'Created' in apply_sp_result.stdout"
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "{{ apply_sp_result.stdout }}"
