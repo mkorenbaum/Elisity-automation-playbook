@@ -18,7 +18,7 @@ Covers all 4 object types in safe deletion order:
 ##   ↳ CORK PGs survive: they don't carry the FORRESTER-DEMO label.
 ##
 ## Policies:
-##   Guard 1: policy is inside the FRSTR-HOSPITAL-MONITOR-ONLY policy set
+##   Guard 1: policy is inside the FRSTR-HOSPITAL policy set
 ##   Guard 2: name is NOT in policies.yaml
 ##   ↳ Implicit by querying only the demo policy set; CORK / Default /
 ##     Demo policy set policies are never enumerated.
@@ -37,7 +37,7 @@ Covers all 4 object types in safe deletion order:
 ##   prefix for SPs) plus the YAML-declaration check. The label and
 ##   policy-set boundaries are themselves explicit demo-managed
 ##   markers — no real production object will be tagged FORRESTER-DEMO
-##   or live inside FRSTR-HOSPITAL-MONITOR-ONLY by accident.
+##   or live inside FRSTR-HOSPITAL by accident.
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ CCC_PY = REPO_ROOT / "bin" / "ccc.py"
 
 # v2 demo scoping markers
 DEMO_PG_LABEL = "FORRESTER-DEMO"                       # PG-label cleanup tag
-DEMO_POLICY_SET = "FRSTR-HOSPITAL-MONITOR-ONLY"        # policy set name
+DEMO_POLICY_SET = "FRSTR-HOSPITAL"        # policy set name
 SP_PREFIX = "FRSTR-"                                   # security-profile name prefix
 
 

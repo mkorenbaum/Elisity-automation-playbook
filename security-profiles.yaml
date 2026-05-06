@@ -65,24 +65,12 @@ security_profiles:
     rules:
       - { protocol: tcp, dst_ports: "502", action: permit }
 
-  # 6. Allow All — full-mesh permit (trusted intra-zone)
-  - name: FRSTR-ALLOW-ALL
-    description: |
-      Permit all traffic. Used for self-policies on PGs that represent
-      a single trust boundary, and for permit-all cross-PG cells where
-      two trusted infrastructure zones need full-mesh communication.
-    rules:
-      - { protocol: any, dst_ports: "any", action: permit }
+  # Note: pure permit-all and deny-all cells use CCC's built-in
+  # "Allow All" and "Deny All" system Security Profiles directly so
+  # the policy matrix renders those names verbatim in the CCC UI.
+  # No custom FRSTR-ALLOW-ALL / FRSTR-DENY-ALL needed.
 
-  # 7. Deny All — explicit default-deny between segregated PGs
-  - name: FRSTR-DENY-ALL
-    description: |
-      Deny all traffic. Used between PGs that should not communicate
-      at all (e.g., infusion-pumps to building-management).
-    rules:
-      - { protocol: any, dst_ports: "any", action: deny }
-
-  # 8. Quarantine — DNS only, deny everything else
+  # 6. Quarantine — DNS only, deny everything else
   - name: FRSTR-QUARANTINE
     description: |
       Quarantine egress: DNS resolution only so the device can still
