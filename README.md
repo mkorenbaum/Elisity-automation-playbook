@@ -2,9 +2,9 @@
 
 Declarative healthcare microsegmentation for the Elisity `insights-demo`
 tenant, Hospital site. Four YAML files define 8 Policy Groups, 36 Policies,
-6 custom Security Profiles, and a dedicated Policy Set. Six replayable
+6 custom Security Profiles, and a dedicated Policy Set. Eight replayable
 lifecycle scenarios demonstrate the full GitOps loop: bootstrap, add, update,
-profile swap, site scope, revert.
+profile swap, drift detection, promote, revert, cleanup.
 
 Built for analyst demonstrations of Forrester Wave Strategy Q19:
 
@@ -34,14 +34,16 @@ monitor-only simulation to enforcement. An hourly drift check detects
 out-of-band edits and opens a GitHub issue. Reverting is a one-click workflow
 that opens a removal PR.
 
-The demo replays six named lifecycle scenarios, each independently triggerable:
+The demo replays eight named lifecycle scenarios, each independently triggerable:
 
 1. **Bootstrap** the policy set, PG label, and security profiles from scratch
 2. **Add** a new multi-source Policy Group via PR
 3. **Update** match criteria on an existing Policy Group via PR
 4. **Attach** a security profile to a policy via PR
-5. **Scope** VE-to-site assignment as declarative config
-6. **Revert** and clean up, proving pre-existing tenant objects are untouched
+5. **Detect** configuration drift between CCC live state and the YAML source of truth
+6. **Promote** policies from monitor-only to enforcement via release tag
+7. **Revert** a single Policy Group declaratively
+8. **Clean up** all demo objects, proving pre-existing tenant content is untouched
 
 Safety is structural, not procedural. Three independent guards (PG label,
 SP name prefix, policy set boundary) ensure that reconciliation only touches
@@ -73,7 +75,7 @@ or deletion. See [Safety story](#safety-story) for the full breakdown.
 |  promote.yml ----- release published --- bin/promote.py         |
 |  drift-check.yml - hourly + manual ----- bin/drift.py           |
 |  revert.yml ------ workflow_dispatch --- opens removal PR       |
-|  cleanup.yml ----- workflow_dispatch --- bin/cleanup_by_prefix  |
+|  cleanup.yml ----- workflow_dispatch --- bin/cleanup_demo.py    |
 +--------------------------+--------------------------------------+
                            |  HTTPS + OAuth2 client credentials
                            v
@@ -229,231 +231,474 @@ servers, and Defender-onboarded PCs.
 
 ---
 
+## Quick start: zero to working demo
+
+Follow these steps in order. When you finish, the full 8-PG, 36-policy demo
+is running in CCC, ready for lifecycle scenario walkthroughs.
+
+### Prerequisites
+
+Before starting, confirm all of the following:
+
+- [ ] Repo cloned locally or forked into a GitHub org with Actions enabled
+- [ ] Self-hosted GitHub Actions runner registered and online (see [Self-hosted runner](#self-hosted-runner))
+- [ ] Repository secrets configured: `CCC_URL`, `CCC_CLIENT_ID`, `CCC_CLIENT_SECRET` (see [Required GitHub configuration](#required-github-configuration))
+- [ ] Workflow permissions: **Allow GitHub Actions to create and approve pull requests** enabled (`Settings` > `Actions` > `General` > `Workflow permissions`)
+- [ ] Target CCC tenant has a `Hospital` site label already provisioned
+
+### If the tenant has prior demo state, run cleanup
+
+Skip this sub-section if you are starting with a fresh tenant.
+
+1. Open the repository on GitHub. Click the **Actions** tab.
+2. In the left sidebar, click **Cleanup demo state**.
+3. Click **Run workflow** (top right). Select branch `main`.
+4. In the `confirm` field, type `CLEANUP-FORRESTER-DEMO` exactly. Any other
+   value causes the job to skip.
+5. Click **Run workflow**.
+
+The workflow job summary will show:
+
+```
+## 🧹 Cleanup -- Forrester demo teardown
+**Scope:** PG label `FORRESTER-DEMO` + name prefix `FRSTR-*` + policy set `FRSTR-HOSPITAL`
+Deleted N object(s):
+- Policy   `INFUSION-PUMPS > EHR-SERVERS`
+  ... (one line per primary policy)
+- PolicySet `FRSTR-HOSPITAL`
+- PG       `INFUSION-PUMPS`
+  ... (one line per PG)
+- SP       `FRSTR-ALLOW-DICOM`
+  ... (one line per custom SP)
+- PGLabel  `FORRESTER-DEMO`
+```
+
+The script deletes in dependency order:
+
+1. All non-reflection policies inside `FRSTR-HOSPITAL` (CCC auto-deletes
+   reflection pairs when their parent policy is removed)
+2. The `FRSTR-HOSPITAL` policy set (after clearing its scope via PUT)
+3. Every Policy Group carrying the `FORRESTER-DEMO` label
+4. Every Security Profile whose name starts with `FRSTR-` (skips
+   CCC-managed reflection SPs)
+5. The `FORRESTER-DEMO` PG label
+
+**Verify cleanup worked:**
+
+- CCC UI > Policy > Policy Sets: no `FRSTR-HOSPITAL`
+- CCC UI > Policy > Policy Groups: filter for `FORRESTER-DEMO` label, expect 0 results
+- Existing CORK and Default content: untouched
+
+### Bootstrap the demo
+
+1. Click the **Actions** tab. In the left sidebar, click **Bootstrap Forrester Demo**.
+2. Click **Run workflow**. Select branch `main`.
+3. In the `confirm` field, type `BOOTSTRAP-FORRESTER-DEMO`.
+4. Leave `target_branch` as `main` (the default).
+5. Click **Run workflow**.
+
+The job creates these objects in CCC:
+
+- PG label `FORRESTER-DEMO`
+- Policy set `FRSTR-HOSPITAL` (Hospital site, `MONITOR_ONLY`)
+- 6 custom security profiles: `FRSTR-ALLOW-DICOM`, `FRSTR-ALLOW-HL7`,
+  `FRSTR-ALLOW-HTTPS`, `FRSTR-CLINICAL-IOT`, `FRSTR-BMS-MODBUS`,
+  `FRSTR-QUARANTINE`
+
+When the job finishes, it opens an auto-PR against `main` that caches the
+resolved CCC object IDs into `inventory/group_vars/all.yml`. **Merge that PR.**
+
+**Verify bootstrap worked:**
+
+- CCC UI > Policy > Policy Sets: `FRSTR-HOSPITAL` visible (Hospital site, MONITOR_ONLY)
+- CCC UI > Policy > Policy Groups: no `FORRESTER-DEMO`-labelled PGs yet (those come from `apply.yml`)
+
+### Apply the PG and policy YAML to CCC
+
+Merging the bootstrap cache PR in the previous step triggers `apply.yml`
+automatically (it runs on every push to `main` that touches YAML or tooling
+files).
+
+1. Click the **Actions** tab. Click the most recent **Apply to CCC** run.
+2. Expand the job steps. The apply log shows 8 PGs created and 36 policies
+   created. The reconcile step confirms no orphans.
+3. Wait for the run to complete (typically under 60 seconds).
+
+**Verify apply worked:**
+
+- CCC UI > Policy > Policy Groups: 8 demo PGs visible: `INFUSION-PUMPS`,
+  `PATIENT-MONITORS`, `IMAGING`, `EHR-SERVERS`, `VERIFIED-SERVERS`,
+  `VERIFIED-PCS`, `BUILDING-MANAGEMENT`, `ISOLATION`
+- CCC UI > Policy > Policy Sets > `FRSTR-HOSPITAL`: 36 primary policies
+  plus 28 reflection policies
+- Click any policy: the securityProfileName column shows `Allow All`,
+  `Deny All`, `FRSTR-ALLOW-HL7`, `FRSTR-ALLOW-DICOM`, `FRSTR-BMS-MODBUS`,
+  or `FRSTR-QUARANTINE`
+
+### Demo is live
+
+The full demo is running in CCC. Continue to
+[Lifecycle scenarios](#lifecycle-scenarios) for the eight walkthroughs an
+analyst can demonstrate.
+
+---
+
 ## Lifecycle scenarios
 
-Six independently replayable scenarios. Run them in order for a full
+Eight independently replayable scenarios. Run them in order for a full
 walkthrough, or pick any single scenario to demonstrate a specific lifecycle
-operation.
+operation. Each scenario includes the goal, numbered steps, expected outcome,
+CCC verification, and reset instructions.
 
 ### Scenario 1: Bootstrap
 
-Stand up the foundational objects in one click.
-
-**Goal:** Create the policy set, PG label, and all 6 custom security profiles
-in CCC from scratch. The analyst sees a single workflow run produce the
-infrastructure that every subsequent scenario depends on.
-
-**Trigger:** `workflow_dispatch` on `bootstrap.yml` from the GitHub Actions UI.
-Required inputs: `confirm` = `BOOTSTRAP-FORRESTER-DEMO`,
-`target_branch` = `main`.
-
-**Expected outcome:**
-
-- 1 policy set (`FRSTR-HOSPITAL`) created in CCC
-- 1 PG label (`FORRESTER-DEMO`) created
-- 6 custom security profiles created (names match `security-profiles.yaml`)
-- Auto-PR opened that writes the resolved CCC object IDs into
-  `inventory/group_vars/all.yml` so subsequent CI runs reference them by ID
-
-**Reset:** Run `cleanup.yml` to delete all demo objects, then re-run
-`bootstrap.yml`. Bootstrap is idempotent; re-running without cleanup
-is a no-op.
-
-See [The bootstrap step](#the-bootstrap-step) for the detailed walkthrough.
+See [Quick start, step 3: Bootstrap the demo](#bootstrap-the-demo) and
+[The bootstrap step](#the-bootstrap-step) for the complete click-by-click
+walkthrough and technical detail.
 
 ---
 
-### Scenario 2: Add a multi-source Policy Group
+### Scenario 2: Add a multi-source Policy Group via PR
 
-Add a new PG through a pull request, demonstrating multi-source classification
-and the automated preview gate.
+**Goal:** Add a new PG `PACS-ARCHIVES` to demonstrate the multi-source-OR
+classification model.
 
-**Goal:** The analyst opens a PR that adds a Policy Group with multiple
-condition blocks (connector-driven plus manual-label fallback). The preview
-workflow posts a comment showing the new PG's OR criteria. Merging creates
-the PG in CCC.
+**Steps:**
 
-**Trigger:** Edit `policy-groups.yaml` in the GitHub UI (or locally), adding
-a new entry at the end of the `policy_groups:` list. Open a PR.
+1. From a terminal:
 
-**Example entry to paste** (matching the existing 2-space indent):
+   ```bash
+   git checkout main && git pull && git checkout -b add-pacs-archives
+   ```
 
-```yaml
-  - name: PACS-ARCHIVES
-    description: |
-      PACS imaging archive workstations. Multi-source classification:
-      Medigate device-class primary, normalized class plus hostname
-      secondary, manual label fallback.
-    type: DYNAMIC
-    security_level: 3
-    auto_lock_devices: false
-    labels: [FORRESTER-DEMO]
-    match:
-      condition_blocks:
-        - conditions:
-            - { attribute: medigate.deviceClass, operator: EQ, values: ["PACS"] }
-        - conditions:
-            - { attribute: core.normalizedClass, operator: EQ, values: ["Medical Device"] }
-            - { attribute: core.hostname, operator: CONTAINS, values: ["PACS"] }
-        - conditions:
-            - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
+2. Open `policy-groups.yaml` in your editor. Append this block at the end of
+   the `policy_groups:` list (match the existing 2-space indent):
+
+   ```yaml
+     - name: PACS-ARCHIVES
+       description: |
+         Picture Archiving and Communication Servers, DICOM image stores.
+       type: DYNAMIC
+       security_level: 3
+       auto_lock_devices: false
+       labels: [FORRESTER-DEMO]
+       match:
+         condition_blocks:
+           - conditions:
+               - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+           - conditions:
+               - { attribute: medigate.deviceClass, operator: EQ, values: ["Imaging"] }
+           - conditions:
+               - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
+   ```
+
+3. Commit, push, and open a PR:
+
+   ```bash
+   git add policy-groups.yaml
+   git commit -m "Add PACS-ARCHIVES PG"
+   git push -u origin add-pacs-archives
+   gh pr create --base main --title "Add PACS-ARCHIVES PG" \
+     --body "Multi-source PG for PACS imaging archives."
+   ```
+
+4. Watch the PR. The **PR Preview** workflow runs and posts a sticky comment
+   showing the new PG, its 3 OR condition blocks, and security level.
+
+5. Merge the PR.
+
+6. `apply.yml` runs automatically on the merge. Click the **Actions** tab to
+   confirm the run completes with a green check.
+
+**Expected result:** 1 new PG `PACS-ARCHIVES` in CCC, carrying the
+`FORRESTER-DEMO` label.
+
+**Verify in CCC:** Policy > Policy Groups list now shows 9 demo PGs
+including `PACS-ARCHIVES`.
+
+**Reset:** Run the revert workflow (Scenario 7) with PG name `PACS-ARCHIVES`.
+
+---
+
+### Scenario 3: Update PG match criteria via PR
+
+**Goal:** Tighten classification on `EHR-SERVERS` by adding a second connector
+signal (CrowdStrike trust) to Block 2.
+
+**Steps:**
+
+1. From a terminal:
+
+   ```bash
+   git checkout main && git pull && git checkout -b ehr-tighten-trust
+   ```
+
+2. Open `policy-groups.yaml`. Find the `EHR-SERVERS` entry. Locate Block 2
+   (the single `core.trustAttributes CONTAINS "Known in ServiceNow"`
+   condition). Add a second condition to the same block so both must match
+   (AND logic within one block):
+
+   ```yaml
+   # Change Block 2 from:
+           - conditions:
+               - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
+
+   # To (AND-ed within the same block):
+           - conditions:
+               - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
+               - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in CrowdStrike"] }
+   ```
+
+3. Commit, push, and open a PR:
+
+   ```bash
+   git add policy-groups.yaml
+   git commit -m "Tighten EHR-SERVERS: require ServiceNow AND CrowdStrike trust"
+   git push -u origin ehr-tighten-trust
+   gh pr create --base main \
+     --title "Tighten EHR-SERVERS trust criteria" \
+     --body "Block 2 now requires both ServiceNow and CrowdStrike trust attributes."
+   ```
+
+4. The preview comment shows the criteria diff: one new condition added to
+   `EHR-SERVERS` Block 2.
+
+5. Merge the PR. `apply.yml` updates the PG in CCC.
+
+**Expected result:** `EHR-SERVERS` PG now requires BOTH trust attributes when
+the connector signal is the discriminator.
+
+**Verify in CCC:** Policy > Policy Groups > click `EHR-SERVERS` > Match
+Criteria > Block 2 shows two AND-ed conditions.
+
+**Reset:** Revert the merge commit, or push a follow-up PR restoring Block 2
+to the original single ServiceNow condition.
+
+---
+
+### Scenario 4: Attach a security profile to a policy via PR
+
+**Goal:** Change the `IMAGING > EHR-SERVERS` policy from `FRSTR-ALLOW-DICOM`
+to `FRSTR-ALLOW-HTTPS` (e.g., the imaging system migrated to a web-based
+PACS).
+
+**Steps:**
+
+1. From a terminal:
+
+   ```bash
+   git checkout main && git pull && git checkout -b imaging-ehr-https
+   ```
+
+2. Open `policies.yaml`. Find the `IMAGING-to-EHR-SERVERS` entry. Change:
+
+   ```yaml
+   security_profile: FRSTR-ALLOW-DICOM
+   ```
+
+   to:
+
+   ```yaml
+   security_profile: FRSTR-ALLOW-HTTPS
+   ```
+
+3. Commit, push, and open a PR:
+
+   ```bash
+   git add policies.yaml
+   git commit -m "IMAGING>EHR-SERVERS: swap DICOM for HTTPS"
+   git push -u origin imaging-ehr-https
+   gh pr create --base main \
+     --title "IMAGING>EHR swap to HTTPS" \
+     --body "Imaging migrated to web-based PACS; switch from DICOM to HTTPS profile."
+   ```
+
+4. The preview comment shows the security_profile diff with before/after
+   profile names and port differences.
+
+5. Merge the PR. `apply.yml` updates the policy in CCC.
+
+**Expected result:** The `IMAGING > EHR-SERVERS` policy now references
+`FRSTR-ALLOW-HTTPS` instead of `FRSTR-ALLOW-DICOM`.
+
+**Verify in CCC:** Policy > Policy Sets > `FRSTR-HOSPITAL` > click
+`IMAGING > EHR-SERVERS` > securityProfileName = `FRSTR-ALLOW-HTTPS`.
+
+**Reset:** Revert the merge commit or push a follow-up PR changing the
+profile back to `FRSTR-ALLOW-DICOM`.
+
+---
+
+### Scenario 5: Drift detection, manual and scheduled
+
+**Goal:** Show that drift between CCC live state and the YAML source of truth
+is detected hourly and on demand. Demonstrate by manually editing a PG in the
+CCC UI, then triggering the drift check.
+
+**Steps:**
+
+1. In the CCC UI, navigate to Policy > Policy Groups. Click `IMAGING`.
+   Click **Edit**. Change the description to anything (e.g., append
+   "DRIFT TEST"). Click **Save**.
+
+   This introduces drift: CCC now differs from the YAML in this repo.
+
+2. In GitHub, click the **Actions** tab. In the left sidebar, click
+   **Drift Check**.
+
+3. Click **Run workflow** (branch `main`, no inputs needed). Click
+   **Run workflow**.
+
+4. Watch the run. `drift.py` compares every declared object against CCC live
+   state and reports the divergence.
+
+5. When drift is found, the workflow opens (or updates) a GitHub issue titled
+   "CCC drift detected" with the `drift` label. The issue body shows the
+   specific fields that differ.
+
+6. Fix the drift by either:
+   - **(a)** Reverting the manual change in the CCC UI (edit `IMAGING` back
+     to its original description), or
+   - **(b)** Updating `policy-groups.yaml` in a PR to match the new CCC state.
+
+7. Re-run the **Drift Check** workflow. If CCC and YAML now match, the
+   workflow closes the drift issue automatically with a comment.
+
+**Expected result:** Drift issue opened after step 3, closed after step 7.
+
+**Verify:** GitHub Issues tab shows the drift issue created and then closed.
+
+**Reset:** No reset needed. Either option in step 6 restores sync.
+
+> **Note:** `drift-check.yml` also runs on a cron schedule (every hour at
+> minute 17). In production, the hourly run catches out-of-band changes
+> without manual intervention.
+
+---
+
+### Scenario 6: Promote to enforcement (release tag)
+
+**Goal:** Show the GitOps audit trail of moving all policies from
+`MONITOR_ONLY` to `MONITOR_AND_ENFORCE`.
+
+**Steps:**
+
+1. From a terminal:
+
+   ```bash
+   git checkout main && git pull
+   git tag -a v1.0.0 -m "Promote to enforcement"
+   git push origin v1.0.0
+   ```
+
+2. In GitHub, navigate to **Releases**. Click the new `v1.0.0` tag. Click
+   **Create release**. Add release notes if desired. Click **Publish release**.
+
+3. The **Promote to enforcement** workflow (`promote.yml`) runs automatically
+   on the publish event. Watch the **Actions** tab for the run.
+
+4. When the job finishes, it appends a promotion summary to the release body
+   (visible on the Releases page).
+
+**Expected result:** All 36 policies in `FRSTR-HOSPITAL` flip from
+`MONITOR_ONLY` to `MONITOR_AND_ENFORCE`.
+
+**Verify in CCC:** Policy > Policy Sets > `FRSTR-HOSPITAL` > policies show
+`MONITOR_AND_ENFORCE` state.
+
+**Reset:** No built-in demote workflow exists yet. To revert, manually edit
+each policy back to `MONITOR_ONLY` in the CCC UI, or write a demote script
+as future work.
+
+---
+
+### Scenario 7: Revert a single Policy Group
+
+**Goal:** Remove a single PG declaratively without tearing down the whole demo.
+
+**Steps:**
+
+1. Click the **Actions** tab. In the left sidebar, click
+   **Revert (remove a Policy Group)**.
+2. Click **Run workflow**.
+3. In the `pg_name` field, type the PG name (e.g., `PACS-ARCHIVES`).
+4. In the `reason` field, type a reason (e.g., `Demo cleanup`).
+5. Click **Run workflow**.
+
+The workflow opens a PR against `main` that removes the named PG from
+`policy-groups.yaml` and removes any policies referencing it from
+`policies.yaml`.
+
+6. Wait for the **PR Preview** comment to land on the PR. Review the diff.
+7. Merge the PR.
+8. `apply.yml` runs on the merge. The reconcile step detects the YAML-to-CCC
+   delta and deletes the PG (and its policies) from CCC.
+
+**Expected result:** PG removed from both YAML files and from CCC.
+
+**Verify in CCC:** Policy > Policy Groups > the removed PG is no longer
+listed.
+
+**Reset:** Add the PG back via Scenario 2.
+
+---
+
+### Scenario 8: Full cleanup
+
+**Goal:** Tear down ALL demo objects to leave the tenant clean. CORK and
+Default content survives.
+
+**Steps:**
+
+1. Click the **Actions** tab. In the left sidebar, click
+   **Cleanup demo state**.
+2. Click **Run workflow**. Select branch `main`.
+3. In the `confirm` field, type `CLEANUP-FORRESTER-DEMO` exactly.
+4. Click **Run workflow**.
+
+The cleanup script (`bin/cleanup_demo.py`) deletes in dependency order:
+
+1. All non-reflection policies inside `FRSTR-HOSPITAL` (CCC auto-deletes
+   reflection pairs when their parent policy is removed)
+2. The `FRSTR-HOSPITAL` policy set (after clearing its scope via PUT)
+3. Every Policy Group carrying the `FORRESTER-DEMO` label
+4. Every Security Profile whose name starts with `FRSTR-` (skips
+   CCC-managed reflection SPs)
+5. The `FORRESTER-DEMO` PG label
+
+**Expected log output** (visible in the workflow job summary):
+
+```
+## 🧹 Cleanup -- Forrester demo teardown
+**Scope:** PG label `FORRESTER-DEMO` + name prefix `FRSTR-*` + policy set `FRSTR-HOSPITAL`
+Deleted N object(s):
+- Policy   `INFUSION-PUMPS > EHR-SERVERS`
+  ... (one line per primary policy)
+- PolicySet `FRSTR-HOSPITAL`
+- PG       `INFUSION-PUMPS`
+  ... (one line per PG)
+- SP       `FRSTR-ALLOW-DICOM`
+  ... (one line per custom SP)
+- PGLabel  `FORRESTER-DEMO`
 ```
 
-**Expected outcome:**
+**Verify in CCC:**
 
-- Preview comment from `github-actions[bot]` showing the new PG, its 3 OR
-  condition blocks, and security level
-- After merge, `apply.yml` runs and creates the PG in CCC
-- Reconcile step confirms no orphans
+- Policy > Policy Sets: no `FRSTR-HOSPITAL`
+- Policy > Policy Groups: no PGs with the `FORRESTER-DEMO` label
+- CORK PGs (9 of them): still present
+- Default policy set: untouched
 
-**Reset:** Run `revert.yml` with `pg_name=PACS-ARCHIVES` to open a removal
-PR. Merge that PR. The reconcile step in apply deletes the PG from CCC.
-
----
-
-### Scenario 3: Update PG match criteria
-
-Tighten or loosen classification on an existing Policy Group through a PR.
-
-**Goal:** The analyst edits the match criteria of an existing PG and sees a
-pure criteria diff in the preview comment. This demonstrates that
-classification changes go through the same review gate as any other change.
-
-**Trigger:** Edit `policy-groups.yaml` in the GitHub UI. Modify the
-`condition_blocks` of an existing PG entry. Open a PR.
-
-**Example edit on `VERIFIED-SERVERS`:** The PG currently matches on
-`core.normalizedClass EQ "Server Appliance and Storage"` (Block 1),
-`core.trustAttributes CONTAINS "Known in CrowdStrike"` (Block 2), and
-`core.label EQ "VERIFIED-SERVERS"` (Block 3). To add a fourth block
-recognizing Armis-corroborated servers, insert after Block 2:
-
-```yaml
-        - conditions:
-            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in Armis"] }
-```
-
-**Expected outcome:**
-
-- Preview comment shows the criteria diff: one new condition block added to
-  `VERIFIED-SERVERS`
-- After merge, `apply.yml` updates the PG's `matchingCriteria` in CCC
-
-**Reset:** Open a follow-up PR that removes the added block, or revert the
-merge commit. Merge to restore the original 3-block criteria.
-
----
-
-### Scenario 4: Attach a security profile to a policy
-
-Change which L4 security profile governs a specific policy through a PR.
-
-**Goal:** The analyst changes one field in `policies.yaml` to swap the profile
-on a policy. The preview comment shows the before/after. This demonstrates
-that policy-level access control changes are reviewable, auditable, and
-version-controlled.
-
-**Trigger:** Edit `policies.yaml` in the GitHub UI. Change the
-`security_profile` field on an existing policy entry. Open a PR.
-
-**Example edit on IMAGING to EHR-SERVERS:** Swap from `FRSTR-ALLOW-DICOM`
-to `FRSTR-ALLOW-HTTPS`:
-
-```yaml
-  # Before
-  security_profile: FRSTR-ALLOW-DICOM
-
-  # After
-  security_profile: FRSTR-ALLOW-HTTPS
-```
-
-This changes the permitted traffic between imaging and EHR servers from DICOM
-(TCP 104, 11112, 11113) to HTTPS only (TCP 443).
-
-**Expected outcome:**
-
-- Preview comment shows the profile swap with before/after profile names and
-  port differences
-- After merge, `apply.yml` updates the policy in CCC with the new profile
-  reference
-
-**Reset:** Open a follow-up PR that reverts the `security_profile` field back
-to `FRSTR-ALLOW-DICOM`. Merge to restore.
-
----
-
-### Scenario 5: VE-to-site assignment (declarative scope)
-
-The Virtual Edge (VE) to site relationship determines where policies take
-effect. This scenario documents the declarative scope.
-
-**Goal:** The analyst sees that the policy set is scoped to the `Hospital`
-site via `site_labels` in `policy-set.yaml`. When a VE is assigned to the
-Hospital site, all policies in the `FRSTR-HOSPITAL` policy set automatically
-take effect for devices behind that VE.
-
-**Trigger:** Manual configuration. VE-to-site assignment is configured in the
-CCC UI or via the CCC API. The demo does not automate this step; VE lifecycle
-management is out of band for this release.
-
-**What to show:**
-
-- Open `policy-set.yaml` and point to `site_labels: [Hospital]`
-- In the CCC UI, navigate to the Hospital site and show its assigned VEs
-- Explain: the policy set binds to the site label, not to individual VEs.
-  Adding or removing a VE from the Hospital site automatically changes which
-  devices fall under demo policies.
-
-**Expected outcome:** The analyst understands that the declarative model
-extends to site scoping. The YAML declares *which* site the policies target.
-The VE-to-site binding is the operational step that activates enforcement
-for a given network segment.
-
-**Reset:** N/A. This scenario is read-only.
-
----
-
-### Scenario 6: Revert and cleanup
-
-Tear down all demo objects and verify that pre-existing tenant content is
-untouched.
-
-**Goal:** The analyst runs the cleanup workflow and confirms that only demo
-objects are removed. Pre-existing Policy Groups in the tenant (including all
-CORK content) survive. This is the safety proof.
-
-**Trigger:** `workflow_dispatch` on `cleanup.yml` from the GitHub Actions UI.
-Leave defaults.
-
-**Expected outcome:**
-
-- All Policy Groups carrying the `FORRESTER-DEMO` label are deleted
-- All Security Profiles with the `FRSTR-` name prefix are deleted
-- All Policies inside the `FRSTR-HOSPITAL` policy set are deleted
-- The policy set and PG label themselves are deleted
-- The cleanup log lists each deletion with object name and type
-- Pre-existing Policy Groups that do not carry the `FORRESTER-DEMO` label, do
-  not have the `FRSTR-` name prefix, and are not in the `FRSTR-HOSPITAL`
-  policy set remain untouched
-- Navigate to Policy Groups in the CCC UI to confirm: demo PGs gone,
-  CORK PGs and production PGs present
-
-**Reset:** Run `bootstrap.yml` followed by a push to main (or `apply.yml`
-manually) to re-create the full demo state from scratch.
-
-**For individual PG removal** without a full cleanup, use `revert.yml`:
-
-1. Navigate to Actions, select **Revert (remove a Policy Group)**.
-2. Enter the PG name (e.g., `PACS-ARCHIVES`) and a reason.
-3. The workflow opens a PR removing that PG from `policy-groups.yaml`.
-4. Merge the PR. The reconcile step in apply deletes the PG from CCC.
+**Reset:** Run Scenario 1 (bootstrap), merge the cache PR, and let
+`apply.yml` run to recreate the full demo from scratch.
 
 ---
 
 ## The bootstrap step
 
 Detailed walkthrough of the one-time setup. Run this before any other
-scenario.
+scenario. For the click-by-click steps, see
+[Quick start: Bootstrap the demo](#bootstrap-the-demo).
 
 **Prerequisites:**
 
@@ -461,25 +706,20 @@ scenario.
   `CCC_CLIENT_SECRET` (see [Required GitHub configuration](#required-github-configuration))
 - Self-hosted runner online (see [Self-hosted runner](#self-hosted-runner))
 
-**Steps:**
+**What bootstrap does internally:**
 
-1. Open the repository on GitHub. Navigate to **Actions** > **Bootstrap**
-   in the left sidebar.
-2. Click **Run workflow**. Set `confirm` to `BOOTSTRAP-FORRESTER-DEMO` and
-   `target_branch` to `main`.
-3. Click **Run workflow** to start the job.
-4. Watch the job log. Bootstrap performs these operations in order:
-   - Authenticates to CCC via OAuth2 client credentials
-   - Looks up the policy set `FRSTR-HOSPITAL` by name; creates it if missing,
-     with `state: MONITOR_ONLY` and `site_labels: [Hospital]`
-   - Looks up the PG label `FORRESTER-DEMO`; creates it if missing
-   - For each of the 6 security profiles in `security-profiles.yaml`: looks
-     up by name, creates if missing
-   - Opens an auto-PR that writes the resolved CCC object IDs into
-     `inventory/group_vars/all.yml`
-5. When the job finishes (green check), merge the auto-PR. This caches the
-   CCC IDs so that `apply.yml`, `promote.yml`, and `drift-check.yml` can
-   reference objects by ID instead of querying by name on every run.
+1. Authenticates to CCC via OAuth2 client credentials
+2. Looks up the PG label `FORRESTER-DEMO` by name; creates it if missing
+3. Looks up the policy set `FRSTR-HOSPITAL` by name; creates it if missing,
+   with `state: MONITOR_ONLY` and `site_labels: [Hospital]`
+4. For each of the 6 security profiles in `security-profiles.yaml`: looks
+   up by name, creates if missing
+5. Opens an auto-PR that writes the resolved CCC object IDs into
+   `inventory/group_vars/all.yml`
+
+When the job finishes (green check), merge the auto-PR. This caches the
+CCC IDs so that `apply.yml`, `promote.yml`, and `drift-check.yml` can
+reference objects by ID instead of querying by name on every run.
 
 **Idempotency:** Running bootstrap a second time without cleanup is a no-op.
 Every create operation checks for existence by name first.
@@ -620,7 +860,7 @@ Key schema fields per entry:
 │   ├── promote.py                  <- MONITOR_ONLY -> MONITOR_AND_ENFORCE
 │   ├── drift.py                    <- live state vs main YAML diff
 │   ├── reconcile.py                <- deletes CCC orphans not in YAML
-│   └── cleanup_by_prefix.py        <- prefix-scoped wipe
+│   └── cleanup_demo.py             <- full demo teardown (v2)
 ├── .github/workflows/
 │   ├── bootstrap.yml               <- workflow_dispatch: one-time setup
 │   ├── preview.yml                 <- runs on PR
@@ -639,20 +879,28 @@ Key schema fields per entry:
 
 One-time setup for the workflows to run.
 
-### Repository secrets (`Settings > Secrets and variables > Actions`)
+### Repository secrets (`Settings` > `Secrets and variables` > `Actions`)
 
 - `CCC_URL`: Cloud Control Center base URL
   (e.g., `https://insights-demo.idp01.elisity.io`)
 - `CCC_CLIENT_ID`: OAuth2 service-account client ID
 - `CCC_CLIENT_SECRET`: OAuth2 service-account client secret
 
-### Environment (`Settings > Environments`)
+### Workflow permissions (`Settings` > `Actions` > `General`)
+
+Under **Workflow permissions**, enable:
+
+- **Read and write permissions** (so workflows can push branches and open PRs)
+- **Allow GitHub Actions to create and approve pull requests** (required by
+  `bootstrap.yml` and `revert.yml`, which open auto-PRs)
+
+### Environment (`Settings` > `Environments`)
 
 Create one named **`insights-demo`**. Attach the three secrets above.
 Optionally add a required reviewer to gate `apply.yml` and `promote.yml`
 runs on a human approval click.
 
-### Branch protection (`Settings > Branches > main`)
+### Branch protection (`Settings` > `Branches` > `main`)
 
 - Require a pull request before merging.
 - Require status check `preview` to pass.
@@ -701,7 +949,7 @@ do not carry this label and are invisible to reconciliation.
 ### Guard 2: Security profile name prefix (`FRSTR-`)
 
 Every custom Security Profile created by this demo uses the `FRSTR-` name
-prefix. `cleanup_by_prefix.py` uses this prefix as its deletion filter for
+prefix. `cleanup_demo.py` uses this prefix as its deletion filter for
 profiles. CCC has no labelling mechanism for Security Profiles, so the name
 prefix is the only safety boundary. CORK Security Profiles do not carry the
 `FRSTR-` prefix and are never candidates for deletion.
