@@ -190,6 +190,19 @@ def main() -> int:
         print(f'ccc_pg_label_id:     "{label_id}"   # {label_name}')
     print("```")
 
+    # Write structured output so the workflow can inject IDs into all.yml
+    # without re-parsing markdown. Consumed by .github/workflows/bootstrap.yml.
+    primary_label_name = next(iter(pg_label_ids), "")
+    primary_label_id = pg_label_ids.get(primary_label_name, "")
+    Path("/tmp/bootstrap-ids.json").write_text(json.dumps({
+        "ccc_policy_set_id": ps_id,
+        "ccc_policy_set_name": ps_name,
+        "ccc_pg_label_id": primary_label_id,
+        "ccc_pg_label_name": primary_label_name,
+        "pg_label_ids": pg_label_ids,
+        "sp_ids": sp_id_map,
+    }, indent=2))
+
     return 0
 
 
