@@ -1,48 +1,43 @@
 #!/usr/bin/env python3
 """
 reconcile.py — delete CCC objects that are no longer declared in the
-repo's YAML files. Multi-layer safety ensures production objects are
-never touched.
+repo's YAML files. Two-guard safety per object type ensures production
+objects are never touched.
 
 Covers all 4 object types in safe deletion order:
-  1. Policies       (reference PGs + SPs — delete first)
-  2. Policy Groups  (referenced by Policies — delete second)
+  1. Policies          (reference PGs + SPs — delete first)
+  2. Policy Groups     (referenced by Policies — delete second)
   3. Security Profiles (referenced by Policies — delete third)
-  4. Policy Set     (not deleted by reconcile — only by cleanup.yml)
+  4. Policy Set        (not deleted by reconcile — only by cleanup.yml)
 
-## Three-Guard Safety (all must pass before any DELETE)
+## Two-Guard Safety (BOTH must pass before any DELETE)
 ##
-## Each object type has three independent guards. ALL three must be true
-## before a DELETE is issued. If any guard fails, the object is skipped.
-##
-## Policy Groups:
-##   Guard 1: name starts with "forrester-demo-"
-##   Guard 2: PG carries the "forrester-demo-hospital" label
-##   Guard 3: name is NOT in policy-groups.yaml
+## Policy Groups (clean functional names — no name prefix):
+##   Guard 1: PG carries the FORRESTER-DEMO label
+##   Guard 2: name is NOT in policy-groups.yaml
+##   ↳ CORK PGs survive: they don't carry the FORRESTER-DEMO label.
 ##
 ## Policies:
-##   Guard 1: name starts with "forrester-demo-"
-##   Guard 2: policy lives in policy set "forrester-demo-hospital-monitor-only"
-##   Guard 3: name is NOT in policies.yaml
+##   Guard 1: policy is inside the FRSTR-HOSPITAL-MONITOR-ONLY policy set
+##   Guard 2: name is NOT in policies.yaml
+##   ↳ Implicit by querying only the demo policy set; CORK / Default /
+##     Demo policy set policies are never enumerated.
 ##
 ## Security Profiles:
-##   Guard 1: name starts with "forrester-demo-"
-##   Guard 2: name starts with "forrester-demo-" (double-checked; SPs have
-##            no label/policy-set scope, so prefix is the primary guard)
-##   Guard 3: name is NOT in security-profiles.yaml
+##   Guard 1: name starts with "FRSTR-"
+##   Guard 2: name is NOT in security-profiles.yaml
+##   ↳ CCC has no labelling for SPs, so the name prefix is the
+##     scoping mechanism for this object type. Built-in SPs
+##     (Allow All, Deny All) and OT-flavored SP-* profiles survive.
 ##
-## Why three guards:
-##   - Guard 1 (prefix) prevents touching ANY non-demo object (CORK PGs,
-##     Default policy set, built-in SPs). This alone would suffice but we
-##     add defense-in-depth.
-##   - Guard 2 (scope) ensures the object belongs to the demo's scoping
-##     boundary (PG label for PGs, policy set for Policies).
-##   - Guard 3 (declaration check) is the actual reconcile logic: the
-##     object IS ours but is no longer declared, so it's an orphan.
-##
-## Existing CORK PGs and the Default policy set carry neither the
-## "forrester-demo-" prefix nor the "forrester-demo-hospital" label.
-## They will never pass Guard 1, let alone all three.
+## Why two guards instead of three:
+##   The original v1 design used both a name prefix AND a label/PS
+##   scope as redundant guards. v2 uses ONE strong scoping mechanism
+##   per object type (label for PGs, policy set for Policies, name
+##   prefix for SPs) plus the YAML-declaration check. The label and
+##   policy-set boundaries are themselves explicit demo-managed
+##   markers — no real production object will be tagged FORRESTER-DEMO
+##   or live inside FRSTR-HOSPITAL-MONITOR-ONLY by accident.
 """
 from __future__ import annotations
 
@@ -57,9 +52,10 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CCC_PY = REPO_ROOT / "bin" / "ccc.py"
 
-PREFIX = "forrester-demo-"
-DEMO_PG_LABEL = "forrester-demo-hospital"
-DEMO_POLICY_SET = "forrester-demo-hospital-monitor-only"
+# v2 demo scoping markers
+DEMO_PG_LABEL = "FORRESTER-DEMO"                       # PG-label cleanup tag
+DEMO_POLICY_SET = "FRSTR-HOSPITAL-MONITOR-ONLY"        # policy set name
+SP_PREFIX = "FRSTR-"                                   # security-profile name prefix
 
 
 def load_creds() -> dict:
@@ -95,27 +91,36 @@ def resolve_policy_set_id(creds: dict, token: str) -> str | None:
     if not raw.strip():
         return None
     listing = json.loads(raw)
-    for ps in listing.get("content", []):
-        if ps["name"] == DEMO_POLICY_SET:
+    items = listing.get("content", []) if isinstance(listing, dict) else listing
+    for ps in items:
+        if ps.get("name") == DEMO_POLICY_SET:
             return ps["id"]
     return None
 
 
-def resolve_pg_label_names(creds: dict, token: str) -> dict[str, list[str]]:
-    """Build a map of PG label ID → label name for label resolution."""
+def resolve_pg_label_id_to_name(creds: dict, token: str) -> dict[str, str]:
+    """Build a map of PG label ID → label name."""
     raw = ccc_call(creds, token, "GET", "/api/policy/v1/policy-group-label")
     if not raw.strip():
         return {}
-    labels = json.loads(raw)
-    return {lb["id"]: lb["name"] for lb in labels}
+    listing = json.loads(raw)
+    items = listing.get("content", []) if isinstance(listing, dict) else listing
+    return {lb["id"]: lb["name"] for lb in items}
 
 
 def pg_has_demo_label(pg: dict[str, Any], label_id_to_name: dict[str, str]) -> bool:
-    """Check if a PG carries the demo PG label."""
-    for label_id in pg.get("labels", []):
-        label_name = label_id_to_name.get(label_id, "")
-        if label_name == DEMO_PG_LABEL:
-            return True
+    """Check whether a PG carries the FORRESTER-DEMO label.
+
+    The PG `labels` field can be either a list of UUIDs or a list of
+    {id, name} objects depending on the endpoint version. Handle both.
+    """
+    for label in pg.get("labels", []):
+        if isinstance(label, dict):
+            if label.get("name") == DEMO_PG_LABEL:
+                return True
+        elif isinstance(label, str):
+            if label_id_to_name.get(label, "") == DEMO_PG_LABEL:
+                return True
     return False
 
 
@@ -129,75 +134,75 @@ def main() -> int:
     sp_doc = yaml.safe_load((REPO_ROOT / "security-profiles.yaml").read_text()) or {}
 
     declared_pg_names = {p["name"] for p in pg_doc.get("policy_groups", [])}
-    declared_pol_names = {p["name"] for p in pol_doc.get("policies", [])}
     declared_sp_names = {p["name"] for p in sp_doc.get("security_profiles", [])}
+    # Policies are CCC-named "<src> > <dst>" — derive the same names
+    # the apply script generates so we match what's actually on the tenant.
+    declared_pol_names = {
+        f"{p['source_pg']} > {p['destination_pg']}"
+        for p in pol_doc.get("policies", [])
+    }
 
     deleted: list[str] = []
 
-    # ── 1. Policies (delete first — they reference PGs) ─────────
+    # ── 1. Policies ──────────────────────────────────────────────
     ps_id = resolve_policy_set_id(creds, token)
     if ps_id:
         raw = ccc_call(creds, token, "GET",
                         f"/api/policy/v1/policy-sets/{ps_id}/policies?size=1000")
         pols = json.loads(raw) if raw.strip() else {}
-        for p in pols.get("content", []):
-            name = p["name"]
-            # Guard 1: prefix check
-            if not name.startswith(PREFIX):
-                continue
-            # Guard 2: policy is in the demo policy set (guaranteed by
-            # the query path, but verify the ps_id matches our demo set)
-            # — already scoped by querying the demo PS ID
-            # Guard 3: not declared in YAML
+        items = pols.get("content", []) if isinstance(pols, dict) else pols
+        for p in items:
+            name = p.get("name", "")
+            # Guard 1: implicit (we queried the demo PS exclusively)
+            # Guard 2: not declared in YAML
             if name in declared_pol_names:
                 continue
-
+            # Skip auto-created reflection (Return) policies — they
+            # delete with their parent.
+            if p.get("isReflection"):
+                continue
             ccc_call(creds, token, "DELETE",
                      f"/api/policy/v1/policy-sets/{ps_id}/policies/{p['id']}")
             deleted.append(f"Policy   `{name}`")
 
-    # ── 2. Policy Groups (delete second) ─────────────────────────
-    label_id_to_name = resolve_pg_label_names(creds, token)
+    # ── 2. Policy Groups ─────────────────────────────────────────
+    label_id_to_name = resolve_pg_label_id_to_name(creds, token)
     raw = ccc_call(creds, token, "GET", "/api/policy/v2/policy-groups?size=500")
     pgs = json.loads(raw) if raw.strip() else {}
     for pg in pgs.get("content", []):
         name = pg["name"]
-        # Guard 1: prefix check
-        if not name.startswith(PREFIX):
-            continue
-        # Guard 2: PG carries the demo label
+        # Guard 1: PG carries the demo label
         if not pg_has_demo_label(pg, label_id_to_name):
             continue
-        # Guard 3: not declared in YAML
+        # Guard 2: not declared in YAML
         if name in declared_pg_names:
             continue
-
         ccc_call(creds, token, "DELETE",
                  f"/api/policy/v2/policy-groups/{pg['id']}")
         deleted.append(f"PG       `{name}`")
 
-    # ── 3. Security Profiles (delete third) ──────────────────────
+    # ── 3. Security Profiles ─────────────────────────────────────
     raw = ccc_call(creds, token, "GET", "/api/policy/v1/security-profiles")
     sp_listing = json.loads(raw) if raw.strip() else {}
     sp_items = sp_listing.get("content", []) if isinstance(sp_listing, dict) else sp_listing
     for sp in sp_items:
         name = sp["name"]
-        # Guard 1: prefix check
-        if not name.startswith(PREFIX):
+        # Guard 1: name prefix
+        if not name.startswith(SP_PREFIX):
             continue
-        # Guard 2: prefix double-check (SPs lack label/PS scope)
-        if not name.startswith(PREFIX):
+        # Skip CCC-managed reflection SPs (auto-created `<name> Return`
+        # copies for bidirectional policies; CCC owns their lifecycle).
+        if sp.get("isReflection") or name.endswith(" Return"):
             continue
-        # Guard 3: not declared in YAML
+        # Guard 2: not declared in YAML
         if name in declared_sp_names:
             continue
-
         ccc_call(creds, token, "DELETE",
                  f"/api/policy/v1/security-profiles/{sp['id']}")
         deleted.append(f"SP       `{name}`")
 
     # ── Report ───────────────────────────────────────────────────
-    print(f"## Reconcile -- `{PREFIX}*`")
+    print(f"## Reconcile — FORRESTER-DEMO scope")
     print()
     if not deleted:
         print(f"> No orphans. Repo and CCC are aligned.")
