@@ -1,31 +1,39 @@
 name: Cleanup demo state
 
-# Manually-triggered teardown of the demo's CCC objects. Run this from
-# the Actions tab between demos to leave the tenant clean.
+# Manually-triggered teardown of every demo CCC object. Run this from
+# the Actions tab between demos to leave the tenant clean. Mirrors the
+# style of bootstrap.yml.
 #
-# Deletes every Policy and Policy Group in the target Policy Set whose
-# name starts with the prefix below (default: forrester-demo-). Does
-# NOT touch any other tenant state.
+# Deletes (in dependency order):
+#   1. All non-reflection Policies inside FRSTR-HOSPITAL policy set
+#   2. The FRSTR-HOSPITAL policy set itself (after PUT-clear of scope)
+#   3. Every Policy Group carrying the FORRESTER-DEMO label
+#   4. Every Security Profile whose name starts with FRSTR-
+#   5. The FORRESTER-DEMO PG label
+#
+# Tenant content WITHOUT the FORRESTER-DEMO label, the FRSTR- name
+# prefix, and outside the FRSTR-HOSPITAL policy set is never touched.
+# CORK PGs / Default policy set / built-in SPs survive.
 
 on:
   workflow_dispatch:
     inputs:
-      prefix:
-        description: 'Name prefix for objects to delete'
+      confirm:
+        description: 'Type CLEANUP-FORRESTER-DEMO to confirm full teardown'
         required: true
-        default: 'forrester-demo-'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ccc-apply       # serialize against apply / promote
+  group: ccc-apply       # serialize against apply / promote / bootstrap
   cancel-in-progress: false
 
 jobs:
   cleanup:
+    if: github.event.inputs.confirm == 'CLEANUP-FORRESTER-DEMO'
     runs-on: self-hosted
-    timeout-minutes: 5
+    timeout-minutes: 10
     environment: insights-demo
     steps:
       - uses: actions/checkout@v4
@@ -41,10 +49,9 @@ jobs:
           CCC_URL: ${{ secrets.CCC_URL }}
           CCC_CLIENT_ID: ${{ secrets.CCC_CLIENT_ID }}
           CCC_CLIENT_SECRET: ${{ secrets.CCC_CLIENT_SECRET }}
-          PREFIX: ${{ inputs.prefix }}
         run: |
           make ci-creds
-          python3 bin/cleanup_by_prefix.py "$PREFIX" | tee /tmp/cleanup.md
+          python3 bin/cleanup_demo.py | tee /tmp/cleanup.md
 
       - name: Append cleanup summary to job
         if: always()
