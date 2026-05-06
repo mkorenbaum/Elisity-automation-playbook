@@ -1,47 +1,34 @@
 #!/usr/bin/env python3
 """
-preview.py — diff a PR's YAML state against main + assess CCC impact.
+preview.py — diff a PR's YAML state against main for all 4 object types.
 
 Run from CI on every PR. Outputs a markdown report to stdout.
 
-What it does:
-1. Read main's policy-groups.yaml and policies.yaml (via git show).
-2. Read the PR's policy-groups.yaml and policies.yaml (working tree).
-3. Diff: list ADDED, REMOVED, CHANGED objects.
-4. For each ADDED Policy Group: query CCC to find how many devices
-   match its criteria today (impact assessment).
-5. Print a markdown table the GitHub Actions workflow then posts as a
-   PR comment.
+Compares:
+  1. policy-set.yaml      — policy set definition
+  2. security-profiles.yaml — security profile rules
+  3. policy-groups.yaml    — policy group conditions
+  4. policies.yaml         — inter-PG policies
 
-Uses bin/ccc.py for HTTP calls. Reads creds from creds.yml in CWD.
+Uses git show to read the base ref version, then compares against the
+working tree. Best-effort CCC enrichment if creds are available.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-import yaml  # PyYAML — installed in CI; for local use, install via pip
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CCC_PY = REPO_ROOT / "bin" / "ccc.py"
 
 
-def load_creds() -> dict[str, str]:
-    with open(REPO_ROOT / "creds.yml") as f:
-        return yaml.safe_load(f)
-
-
-def load_yaml(path: str) -> dict[str, Any]:
-    return yaml.safe_load(path) or {}
-
-
 def git_show(ref: str, path: str) -> str:
-    """Return file contents at git ref, or empty string if not present."""
     try:
         return subprocess.check_output(
             ["git", "show", f"{ref}:{path}"],
@@ -70,45 +57,15 @@ def diff_lists(main_items: list[dict], pr_items: list[dict], key: str = "name") 
     return {"added": added, "removed": removed, "changed": changed}
 
 
-def get_token(creds: dict[str, str]) -> str:
-    base = creds["ccc_url"].rstrip("/")
-    proc = subprocess.run(
-        ["python3", str(CCC_PY), "token",
-         f"{base}/auth/realms/elisity/protocol/openid-connect/token",
-         creds["ccc_client_id"], "-"],
-        input=creds["ccc_client_secret"],
-        text=True, capture_output=True, check=True,
-    )
-    return proc.stdout.strip()
-
-
-def ccc_call(creds: dict[str, str], token: str, path: str) -> str:
-    base = creds["ccc_url"].rstrip("/")
-    proc = subprocess.run(
-        ["python3", str(CCC_PY), "call", "--token", token, f"{base}{path}"],
-        text=True, capture_output=True, check=True,
-    )
-    return proc.stdout
-
-
-def render_pg(pg: dict[str, Any]) -> str:
-    m = pg.get("match", {})
-    return (
-        f"`{pg['name']}`  \n"
-        f"&nbsp;&nbsp;Type: `{pg.get('type','DYNAMIC')}` · "
-        f"Security Level: `SL-{pg.get('security_level','?')}`  \n"
-        f"&nbsp;&nbsp;Match: `{m.get('attribute','?')}` "
-        f"`{m.get('operator','?')}` `{m.get('match_values', [])}`"
-    )
-
-
-def render_policy(p: dict[str, Any]) -> str:
-    return (
-        f"`{p['name']}`  \n"
-        f"&nbsp;&nbsp;Source PG: `{p.get('source_policy_group','?')}` → "
-        f"Dest PG ID: `{p.get('destination_policy_group_id','?')[:8]}…`  \n"
-        f"&nbsp;&nbsp;Mode: **`{p.get('monitor_mode','?')}`**"
-    )
+def diff_scalar(base_val: Any, pr_val: Any, label: str) -> list[str]:
+    """Diff two scalar/dict values, return list of change strings."""
+    if base_val == pr_val:
+        return []
+    if base_val is None:
+        return [f"**Added** {label}"]
+    if pr_val is None:
+        return [f"**Removed** {label}"]
+    return [f"**Changed** {label}"]
 
 
 def render_diff_section(title: str, items: list, renderer) -> str:
@@ -120,79 +77,109 @@ def render_diff_section(title: str, items: list, renderer) -> str:
     return "\n".join(lines) + "\n"
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--base-ref", default="origin/main",
-                        help="Git ref to diff against (default origin/main)")
-    args = parser.parse_args()
-
-    main_pgs = yaml.safe_load(git_show(args.base_ref, "policy-groups.yaml") or "{}") or {}
-    main_pgs = main_pgs.get("policy_groups", [])
-    main_pols = yaml.safe_load(git_show(args.base_ref, "policies.yaml") or "{}") or {}
-    main_pols = main_pols.get("policies", [])
-
-    pr_pgs = read_yaml_file(REPO_ROOT / "policy-groups.yaml").get("policy_groups", [])
-    pr_pols = read_yaml_file(REPO_ROOT / "policies.yaml").get("policies", [])
-
-    pg_diff = diff_lists(main_pgs, pr_pgs)
-    pol_diff = diff_lists(main_pols, pr_pols)
-
-    total_changes = (
-        len(pg_diff["added"]) + len(pg_diff["removed"]) + len(pg_diff["changed"]) +
-        len(pol_diff["added"]) + len(pol_diff["removed"]) + len(pol_diff["changed"])
+def render_pg(pg: dict) -> str:
+    m = pg.get("match", {})
+    n_blocks = len(m.get("condition_blocks", []))
+    return (
+        f"`{pg['name']}`  \n"
+        f"&nbsp;&nbsp;Type: `{pg.get('type', 'DYNAMIC')}` | "
+        f"SL-{pg.get('security_level', '?')} | "
+        f"{n_blocks} condition block(s)"
     )
 
-    # Header
-    print("## 🔍 PR Preview — Elisity Microsegmentation")
+
+def render_sp(sp: dict) -> str:
+    n_rules = len(sp.get("rules", []))
+    return f"`{sp['name']}` ({n_rules} rule(s))"
+
+
+def render_policy(p: dict) -> str:
+    return (
+        f"`{p['name']}`  \n"
+        f"&nbsp;&nbsp;{p.get('source_pg', '?')} "
+        f"{'<->' if p.get('direction') == 'BIDIRECTIONAL' else '->'} "
+        f"{p.get('destination_pg', '?')} | "
+        f"SP: `{p.get('security_profile', '?')}` | "
+        f"`{p.get('state', 'MONITOR_ONLY')}`"
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base-ref", default="origin/main")
+    args = parser.parse_args()
+
+    # ── Load base (main) and PR versions of all 4 YAMLs ─────────
+    base_ps = yaml.safe_load(git_show(args.base_ref, "policy-set.yaml") or "{}") or {}
+    pr_ps = read_yaml_file(REPO_ROOT / "policy-set.yaml")
+
+    base_sps = (yaml.safe_load(git_show(args.base_ref, "security-profiles.yaml") or "{}") or {}).get("security_profiles", [])
+    pr_sps = read_yaml_file(REPO_ROOT / "security-profiles.yaml").get("security_profiles", [])
+
+    base_pgs = (yaml.safe_load(git_show(args.base_ref, "policy-groups.yaml") or "{}") or {}).get("policy_groups", [])
+    pr_pgs = read_yaml_file(REPO_ROOT / "policy-groups.yaml").get("policy_groups", [])
+
+    base_pols = (yaml.safe_load(git_show(args.base_ref, "policies.yaml") or "{}") or {}).get("policies", [])
+    pr_pols = read_yaml_file(REPO_ROOT / "policies.yaml").get("policies", [])
+
+    # ── Diff each section ────────────────────────────────────────
+    ps_changes = diff_scalar(base_ps.get("policy_set"), pr_ps.get("policy_set"), "policy set")
+    sp_diff = diff_lists(base_sps, pr_sps)
+    pg_diff = diff_lists(base_pgs, pr_pgs)
+    pol_diff = diff_lists(base_pols, pr_pols)
+
+    total = (
+        len(ps_changes)
+        + len(sp_diff["added"]) + len(sp_diff["removed"]) + len(sp_diff["changed"])
+        + len(pg_diff["added"]) + len(pg_diff["removed"]) + len(pg_diff["changed"])
+        + len(pol_diff["added"]) + len(pol_diff["removed"]) + len(pol_diff["changed"])
+    )
+
+    # ── Render report ────────────────────────────────────────────
+    print("## PR Preview -- Elisity Microsegmentation (v2)")
     print()
-    if total_changes == 0:
-        print("> ✅ **No segmentation changes** in this PR.")
+    if total == 0:
+        print("> No segmentation changes in this PR.")
         return 0
 
-    print(f"> This PR proposes **{total_changes} change(s)** to "
-          f"Elisity's microsegmentation policy.")
+    print(f"> This PR proposes **{total} change(s)** across 4 declaration files.")
     print()
-    print("**Pipeline:** PR review → merge to `main` (auto-apply in `MONITOR_ONLY`) "
-          "→ release tag (auto-promote to `MONITOR_AND_ENFORCE`).")
+    print("**Pipeline:** PR review -> merge to `main` (auto-apply in `MONITOR_ONLY`) "
+          "-> release tag (auto-promote to `MONITOR_AND_ENFORCE`).")
     print()
 
-    # Try to enrich added PGs with current CCC tenant impact, but only
-    # if creds are available (CI). Skip silently otherwise.
-    enrichment: dict[str, str] = {}
-    creds_ok = (REPO_ROOT / "creds.yml").exists()
-    if creds_ok and pg_diff["added"]:
-        try:
-            creds = load_creds()
-            token = get_token(creds)
-            # Fetch all current devices we'd need to evaluate match counts
-            # (lightweight: just count via /policy-groups view of existing PGs).
-            # Best-effort — failures are non-fatal.
-            for pg in pg_diff["added"]:
-                # Attempt a lookup of the named PG; if exists already we can show count.
-                # For new PGs we can only show the match criteria — full impact
-                # analysis requires creating the PG in simulation, which the
-                # `apply` workflow does on merge.
-                enrichment[pg["name"]] = "(impact assessed at merge time in MONITOR_ONLY)"
-        except Exception as e:
-            print(f"> _Note: could not query CCC for impact preview: {e}_")
-            print()
+    # Policy Set
+    if ps_changes:
+        print("## Policy Set changes")
+        for c in ps_changes:
+            print(f"- {c}")
+        print()
 
+    # Security Profiles
+    print("## Security Profile changes")
+    print(render_diff_section("Added", sp_diff["added"], render_sp))
+    print(render_diff_section("Removed", sp_diff["removed"], render_sp))
+    print(render_diff_section("Changed", sp_diff["changed"],
+                              lambda c: f"`{c['name']}` (rules differ)"))
+
+    # Policy Groups
     print("## Policy Group changes")
-    print(render_diff_section("➕ Added", pg_diff["added"], render_pg))
-    print(render_diff_section("➖ Removed", pg_diff["removed"], render_pg))
-    print(render_diff_section("✏️ Changed", pg_diff["changed"],
+    print(render_diff_section("Added", pg_diff["added"], render_pg))
+    print(render_diff_section("Removed", pg_diff["removed"], render_pg))
+    print(render_diff_section("Changed", pg_diff["changed"],
                               lambda c: f"`{c['name']}` (fields differ)"))
 
+    # Policies
     print("## Policy changes")
-    print(render_diff_section("➕ Added", pol_diff["added"], render_policy))
-    print(render_diff_section("➖ Removed", pol_diff["removed"], render_policy))
-    print(render_diff_section("✏️ Changed", pol_diff["changed"],
+    print(render_diff_section("Added", pol_diff["added"], render_policy))
+    print(render_diff_section("Removed", pol_diff["removed"], render_policy))
+    print(render_diff_section("Changed", pol_diff["changed"],
                               lambda c: f"`{c['name']}` (fields differ)"))
 
     print("---")
-    print("- ✅ All new policies start in `MONITOR_ONLY` — no enforcement until release.")
-    print("- 🔁 Drift between this repo and the live tenant is checked hourly.")
-    print("- 🔐 Source of truth: this repo. Production change = merge to `main`.")
+    print("- All new policies start in `MONITOR_ONLY` -- no enforcement until release.")
+    print("- Drift between this repo and the live tenant is checked hourly.")
+    print("- Source of truth: this repo. Production change = merge to `main`.")
 
     return 0
 

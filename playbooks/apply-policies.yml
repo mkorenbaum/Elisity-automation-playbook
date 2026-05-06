@@ -1,0 +1,23 @@
+---
+# Apply policies.yaml to CCC. Resolves PG names, SP names, and policy
+# set name to IDs at apply time. Delegates all logic to bin/apply_policy.py.
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[apply] Policies from policies.yaml"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+  tasks:
+    - name: Apply policies
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../bin/apply_policy.py"
+      register: apply_pol_result
+      changed_when: "'Created' in apply_pol_result.stdout"
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "{{ apply_pol_result.stdout }}"

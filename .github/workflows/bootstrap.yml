@@ -1,0 +1,55 @@
+name: Bootstrap Forrester Demo
+
+# Manually-triggered first-run setup. Creates the policy set, PG label,
+# and security profiles idempotently. Mirrors the style of cleanup.yml.
+#
+# After running, the operator should cache the resolved IDs in
+# inventory/group_vars/all.yml (bootstrap.py prints them).
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type BOOTSTRAP-FORRESTER-DEMO to confirm'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ccc-apply       # serialize against apply / promote / cleanup
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.event.inputs.confirm == 'BOOTSTRAP-FORRESTER-DEMO'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    environment: insights-demo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v2-design
+
+      - name: Ensure PyYAML is installed
+        run: |
+          python3 -m venv /tmp/forrester-venv 2>/dev/null || true
+          /tmp/forrester-venv/bin/pip install --quiet --upgrade PyYAML
+          echo "/tmp/forrester-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Render creds + run bootstrap
+        env:
+          CCC_URL: ${{ secrets.CCC_URL }}
+          CCC_CLIENT_ID: ${{ secrets.CCC_CLIENT_ID }}
+          CCC_CLIENT_SECRET: ${{ secrets.CCC_CLIENT_SECRET }}
+        run: |
+          make ci-creds
+          python3 bin/bootstrap.py 2>&1 | tee /tmp/bootstrap.md
+
+      - name: Append bootstrap summary to job
+        if: always()
+        run: |
+          if [ -f /tmp/bootstrap.md ]; then
+            cat /tmp/bootstrap.md >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -1,0 +1,23 @@
+---
+# Apply policy-groups.yaml to CCC. Handles the v2 condition_blocks
+# schema. Delegates all logic to bin/apply_pg.py.
+
+- ansible.builtin.import_playbook: _auth.yml
+
+- name: "[apply] Policy Groups from policy-groups.yaml"
+  hosts: local
+  gather_facts: false
+  vars_files:
+    - ../creds.yml
+  tasks:
+    - name: Apply policy groups
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../bin/apply_pg.py"
+      register: apply_pg_result
+      changed_when: "'Created' in apply_pg_result.stdout"
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "{{ apply_pg_result.stdout }}"
