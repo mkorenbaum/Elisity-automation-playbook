@@ -56,6 +56,31 @@ def _read_secret(arg: str) -> str:
     return arg
 
 
+def _normalize(text: str, content_type: str) -> str:
+    """Normalize NDJSON listings into a {"content": [...]} envelope.
+
+    CCC's v1 list endpoints (/api/policy/v1/policy-sets,
+    /api/policy/v1/policy-group-label, /api/policy/v1/security-profiles)
+    respond with `application/x-ndjson` — one JSON object per line, no
+    array wrapper. Callers expect the v2-style `{"content": [...]}`
+    pagination envelope, so we transform NDJSON listings into that shape
+    here. Pass-through everything else.
+    """
+    if "ndjson" not in content_type:
+        return text
+    items = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            items.append(json.loads(line))
+        except json.JSONDecodeError:
+            # Malformed line — preserve raw output rather than swallow
+            return text
+    return json.dumps({"content": items})
+
+
 def cmd_token(args: argparse.Namespace) -> int:
     secret = _read_secret(args.client_secret)
     body = urllib.parse.urlencode({
@@ -95,7 +120,11 @@ def cmd_token(args: argparse.Namespace) -> int:
 
 
 def cmd_call(args: argparse.Namespace) -> int:
-    headers = {"Accept": "application/json"}
+    # CCC v1 endpoints (policy-sets, policy-group-label, security-profiles)
+    # respond 406 Not Acceptable to "Accept: application/json" because the
+    # server-side content negotiation does not advertise that exact subtype.
+    # "*/*" is the working accept header for both v1 and v2 routes.
+    headers = {"Accept": "*/*"}
     if args.token:
         headers["Authorization"] = f"Bearer {args.token}"
 
@@ -113,12 +142,16 @@ def cmd_call(args: argparse.Namespace) -> int:
     req = urllib.request.Request(args.url, data=body, method=args.method, headers=headers)
     try:
         with urllib.request.urlopen(req, context=_ssl_ctx(), timeout=60) as resp:
-            sys.stdout.write(resp.read().decode("utf-8"))
+            text = resp.read().decode("utf-8")
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            sys.stdout.write(_normalize(text, ctype))
             return 0
     except urllib.error.HTTPError as e:
         if e.code in accept:
             try:
-                sys.stdout.write(e.read().decode("utf-8"))
+                err_text = e.read().decode("utf-8")
+                err_ctype = (e.headers.get("Content-Type") or "").lower() if hasattr(e, "headers") else ""
+                sys.stdout.write(_normalize(err_text, err_ctype))
             except Exception:
                 pass
             return 0
