@@ -9,12 +9,12 @@
 # After running bootstrap.yml, update these with the resolved IDs
 # printed by bootstrap.py.
 ccc_policy_set_name: "FRSTR-HOSPITAL"
-ccc_policy_set_id:   "58a09bc0-0cdc-4614-8fa3-7547c770ed57"                        # set after bootstrap
+ccc_policy_set_id:   "94cb0647-b739-4f1d-a691-e8410be9e072"                        # set after bootstrap
 
 # PG label created by bootstrap — scopes which PGs participate in
 # the demo policy set.
 ccc_pg_label_name: "FORRESTER-DEMO"
-ccc_pg_label_id:   "1f360c0e-7d1a-4ed0-8bcf-cf4369a36262"                          # set after bootstrap
+ccc_pg_label_id:   "96ab0a5c-78a0-48a7-bb72-8df2c7ef6a91"                          # set after bootstrap
 
 # ── legacy IDs (still used by promote.py) ────────────────────────
 # Built-in "Allow All" Security Profile — used as the fallback in
