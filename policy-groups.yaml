@@ -27,6 +27,7 @@ policy_groups:
       Network-attached IV infusion pumps. Three-source classification:
       core asset-class anchor, Armis CPS signal, manual label fallback.
     type: DYNAMIC
+    genre: IoMT
     security_level: 3        # IEC 62443 SL-3
     auto_lock_devices: false
     labels: [FORRESTER-DEMO]
@@ -46,6 +47,7 @@ policy_groups:
       Three-source classification with Medigate CPS as the connector
       signal.
     type: DYNAMIC
+    genre: IoMT
     security_level: 3
     auto_lock_devices: false
     labels: [FORRESTER-DEMO]
@@ -64,6 +66,7 @@ policy_groups:
       Imaging modalities (CT, MR, X-ray) and acquisition workstations.
       Medigate CPS classifier signals deviceClass=Imaging.
     type: DYNAMIC
+    genre: IoMT
     security_level: 3
     auto_lock_devices: false
     labels: [FORRESTER-DEMO]
@@ -83,6 +86,7 @@ policy_groups:
       ServiceNow CMDB trust as the connector signal; manual label
       fallback for early-deployment edge cases.
     type: DYNAMIC
+    genre: IT
     security_level: 3
     auto_lock_devices: false
     labels: [FORRESTER-DEMO]
@@ -102,6 +106,7 @@ policy_groups:
       signal is the trust attribute "Known in CrowdStrike"; manual
       label fallback is the ops escape hatch.
     type: DYNAMIC
+    genre: IT
     security_level: 2
     auto_lock_devices: false
     labels: [FORRESTER-DEMO]
@@ -121,6 +126,7 @@ policy_groups:
       asset class with Defender as the connector trust signal; manual
       label fallback for clinician laptops awaiting EDR enrolment.
     type: DYNAMIC
+    genre: IT
     security_level: 1
     auto_lock_devices: false
     labels: [FORRESTER-DEMO]
@@ -140,6 +146,7 @@ policy_groups:
       Building Management asset class anchors; Armis CPS classifier
       signals BMS Controller; manual label fallback.
     type: DYNAMIC
+    genre: IoT
     security_level: 3
     auto_lock_devices: false
     labels: [FORRESTER-DEMO]
@@ -162,6 +169,7 @@ policy_groups:
       via explicit tagging. DNS-only egress profile, deny everything
       else. Time-Based Match Criteria auto-reverts.
     type: DYNAMIC
+    genre: None
     security_level: 1
     auto_lock_devices: true
     labels: [FORRESTER-DEMO]

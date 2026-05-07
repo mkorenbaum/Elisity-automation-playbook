@@ -62,6 +62,11 @@ def ccc_get(creds: dict[str, str], token: str, path: str) -> Any:
 
 # ── Signature extraction for comparison ──────────────────────────
 
+def _stable_key(obj) -> str:
+    """Order-independent canonical JSON key for set-like comparison."""
+    return json.dumps(obj, sort_keys=True, default=str)
+
+
 def declared_pg_signature(pg: dict) -> dict:
     """Extract comparable fields from a YAML PG declaration."""
     blocks = []
@@ -74,8 +79,13 @@ def declared_pg_signature(pg: dict) -> dict:
                 "vals": sorted(c["values"]),
             })
         blocks.append(sorted(conds, key=lambda x: x["attr"]))
+    # Sort the outer block list too — CCC may return blocks in a different
+    # order than the YAML declaration; semantically equivalent, but a
+    # naive list compare would flag drift on ordering alone.
+    blocks = sorted(blocks, key=_stable_key)
     return {
         "type": pg.get("type", "DYNAMIC"),
+        "genre": pg.get("genre", "None"),
         "securityLevel": pg.get("security_level"),
         "conditionBlocks": blocks,
     }
@@ -94,38 +104,68 @@ def live_pg_signature(live: dict) -> dict:
                 "vals": sorted(c.get("value", [])),
             })
         blocks.append(sorted(conds, key=lambda x: x["attr"]))
+    blocks = sorted(blocks, key=_stable_key)
     return {
         "type": live.get("policyGroupType"),
+        "genre": live.get("genre", "None"),
         "securityLevel": live.get("securityLevel"),
         "conditionBlocks": blocks,
     }
 
 
+def _expand_dst_ports(dst: str | None) -> list[str | None]:
+    """Comma-separated port lists become multiple rules at apply time
+    (gotcha G4 — CCC rejects comma-lists in a single ruleSet entry). Drift
+    needs to expand the YAML's "104,11112,11113" into ["104","11112","11113"]
+    so the comparison aligns with what's actually on the tenant."""
+    if dst is None or str(dst).lower() == "any":
+        return [None]
+    return [p.strip() for p in str(dst).split(",") if p.strip()]
+
+
 def declared_sp_signature(sp: dict) -> list[dict]:
-    """Extract comparable rule set from YAML SP."""
+    """Extract comparable rule set from YAML SP, expanding comma-port lists."""
     rules = []
     for r in sp.get("rules", []):
-        proto = PROTOCOL_MAP.get(r.get("protocol", "any").lower())
-        dst = r.get("dst_ports", "any")
-        rules.append({
-            "protocol": proto,
-            "dst": None if dst == "any" else str(dst),
-            "permit": r.get("action", "permit").lower() == "permit",
-        })
-    return rules
+        proto_str = r.get("protocol", "any").lower()
+        # Match apply path: "any" -> -1; tcp/udp/icmp -> standard nums
+        proto = {"tcp": 6, "udp": 17, "icmp": 1, "any": -1}.get(proto_str, -1)
+        permit = r.get("action", "permit").lower() == "permit"
+        for dst in _expand_dst_ports(r.get("dst_ports", "any")):
+            rules.append({
+                "protocol": proto,
+                "dst": dst,
+                "permit": permit,
+            })
+    return sorted(rules, key=_stable_key)
 
 
 def live_sp_signature(live: dict) -> list[dict]:
     """Extract comparable rule set from live CCC SP."""
     rules = []
-    for entry in live.get("ruleSet", []):
-        prop = entry.get("property", {})
+    for rule in live.get("securityRules", []):
+        # Live SPs come back with structured port-range objects under
+        # securityRules. Match the apply-time write shape: protocol int,
+        # dst as a string ("443" or "104-110"), permit as bool.
+        dsts = rule.get("destinationPorts") or [{}]
+        first = dsts[0] if dsts else {}
+        if first.get("any"):
+            dst_str = None
+        else:
+            start = first.get("start")
+            end = first.get("end")
+            if start is not None and end is not None and start == end:
+                dst_str = str(start)
+            elif start is not None and end is not None:
+                dst_str = f"{start}-{end}"
+            else:
+                dst_str = None
         rules.append({
-            "protocol": prop.get("protocol"),
-            "dst": prop.get("destinationPorts"),
-            "permit": prop.get("permit", True),
+            "protocol": rule.get("protocol"),
+            "dst": dst_str,
+            "permit": rule.get("action", True),
         })
-    return rules
+    return sorted(rules, key=_stable_key)
 
 
 def declared_policy_signature(p: dict) -> dict:
@@ -141,11 +181,11 @@ def declared_policy_signature(p: dict) -> dict:
 def live_policy_signature(p: dict, pg_id_to_name: dict, sp_id_to_name: dict) -> dict:
     is_mirrored = p.get("isMirrored", False)
     src_name = p.get("srcPolicyGroupName", "")
-    dst_id = p.get("dstPolicyGroupId", "")
-    dst_name = pg_id_to_name.get(dst_id, dst_id)
+    dst_name = p.get("dstPolicyGroupName") or pg_id_to_name.get(p.get("dstPolicyGroupId", ""), "")
 
-    sp_ids = p.get("securityProfiles", [])
-    sp_name = sp_id_to_name.get(sp_ids[0], sp_ids[0]) if sp_ids else ""
+    # CCC's policy listing returns `securityProfileName` (singular) and
+    # `securityProfileId` directly — not a `securityProfiles` array.
+    sp_name = p.get("securityProfileName") or sp_id_to_name.get(p.get("securityProfileId", ""), "")
 
     if src_name == dst_name:
         direction = "SELF"
@@ -235,29 +275,66 @@ def main() -> int:
                     )
 
     # ── 4. Policies ──────────────────────────────────────────────
+    # Three drift signals:
+    #   a) declared in repo but missing in CCC
+    #   b) field drift on a declared policy (sp / direction / state / src / dst)
+    #   c) **orphan** — live in CCC but never declared (out-of-band addition)
+    #
+    # The state mask (MONITOR_ONLY repo vs MONITOR_AND_ENFORCE live) is only
+    # honored when ALL declared policies are flipped — that's the promote.yml
+    # signature. A single-policy out-of-band flip fails the count check and
+    # raises drift.
     if ps_id:
         pol_listing = ccc_get(
             creds, token,
             f"/api/policy/v1/policy-sets/{ps_id}/policies?size=1000",
         ) or {}
-        live_pols_by_name = {p["name"]: p for p in pol_listing.get("content", [])}
+        # Filter out CCC-managed reflection (Return) policies — they're
+        # auto-created with bidirectional pairs; CCC owns their lifecycle.
+        live_pols = [p for p in pol_listing.get("content", []) if not p.get("isReflection")]
+        live_pols_by_name = {p["name"]: p for p in live_pols}
 
+        # CCC names policies "<src> > <dst>"; the YAML `name` field is just
+        # documentation. Match on the auto-generated name to match what
+        # apply_policy.py creates.
+        declared_by_ccc_name: dict[str, dict] = {}
         for p in declared_policies:
-            name = p["name"]
-            live = live_pols_by_name.get(name)
+            ccc_name = f"{p['source_pg']} > {p['destination_pg']}"
+            declared_by_ccc_name[ccc_name] = p
+
+        # State-mask gate: only mask MONITOR_ONLY -> MONITOR_AND_ENFORCE if
+        # ALL declared policies are in MONITOR_AND_ENFORCE on the tenant.
+        if declared_by_ccc_name:
+            promoted = sum(
+                1 for n in declared_by_ccc_name
+                if (live_pols_by_name.get(n) or {}).get("monitorMode") == "MONITOR_AND_ENFORCE"
+            )
+            all_promoted = promoted == len(declared_by_ccc_name)
+        else:
+            all_promoted = False
+
+        # (c) Orphan detection — live policies not declared in YAML
+        for live in live_pols:
+            if live["name"] not in declared_by_ccc_name:
+                drift_rows.append(
+                    f"| Policy | `{live['name']}` | **out-of-band addition** (in CCC, not in YAML) |"
+                )
+
+        # (a) + (b) — declared policies missing or field-drifted in CCC
+        for ccc_name, p in declared_by_ccc_name.items():
+            live = live_pols_by_name.get(ccc_name)
             if not live:
-                drift_rows.append(f"| Policy | `{name}` | declared in repo, **missing in CCC** |")
+                drift_rows.append(f"| Policy | `{ccc_name}` | declared in repo, **missing in CCC** |")
                 continue
             decl_sig = declared_policy_signature(p)
             live_sig = live_policy_signature(live, pg_id_to_name, sp_id_to_name)
-            # Allow MONITOR_AND_ENFORCE if repo says MONITOR_ONLY (post-promotion)
-            if decl_sig["state"] == "MONITOR_ONLY" and live_sig["state"] == "MONITOR_AND_ENFORCE":
+            if all_promoted and decl_sig["state"] == "MONITOR_ONLY" and live_sig["state"] == "MONITOR_AND_ENFORCE":
                 decl_sig["state"] = "MONITOR_AND_ENFORCE"
             if decl_sig != live_sig:
                 for k in decl_sig:
                     if decl_sig[k] != live_sig.get(k):
                         drift_rows.append(
-                            f"| Policy | `{name}` | `{k}`: repo=`{decl_sig[k]}` != live=`{live_sig.get(k)}` |"
+                            f"| Policy | `{ccc_name}` | `{k}`: repo=`{decl_sig[k]}` != live=`{live_sig.get(k)}` |"
                         )
 
     # ── Report ───────────────────────────────────────────────────

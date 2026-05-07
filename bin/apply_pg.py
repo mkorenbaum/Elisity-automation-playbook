@@ -143,6 +143,7 @@ def main() -> int:
             "name": name,
             "description": pg.get("description", "").strip(),
             "policyGroupType": pg.get("type", "DYNAMIC"),
+            "genre": pg.get("genre", "None"),
             "securityLevel": pg.get("security_level", 1),
             "autoLockDevices": pg.get("auto_lock_devices", False),
             "labels": label_ids,
