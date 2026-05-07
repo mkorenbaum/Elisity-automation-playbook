@@ -363,16 +363,15 @@ walkthrough and technical detail.
 **Goal:** Add a new PG `PACS-ARCHIVES` to demonstrate the multi-source-OR
 classification model.
 
-**Steps:**
+**Steps (GitHub web UI, no terminal needed):**
 
-1. From a terminal:
+1. Open `policy-groups.yaml` in the browser:
+   `https://github.com/<owner>/<repo>/blob/main/policy-groups.yaml`
 
-   ```bash
-   git checkout main && git pull && git checkout -b add-pacs-archives
-   ```
+2. Click the pencil icon (top-right of the file view) to open the web editor.
 
-2. Open `policy-groups.yaml` in your editor. Append this block at the end of
-   the `policy_groups:` list (match the existing 2-space indent):
+3. Scroll to the end of the `policy_groups:` list. On a new line, paste this
+   block (match the existing 2-space indent):
 
    ```yaml
      - name: PACS-ARCHIVES
@@ -392,17 +391,17 @@ classification model.
                - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
    ```
 
-3. Commit, push, and open a PR:
+4. Click **Commit changes...** (top-right). In the dialog:
+   - Commit message: `Add PACS-ARCHIVES PG`
+   - Extended description (optional): `Multi-source PG for PACS imaging archives.`
+   - Select **Create a new branch for this commit and start a pull request**
+   - Branch name: `add-pacs-archives`
+   - Click **Propose changes**
 
-   ```bash
-   git add policy-groups.yaml
-   git commit -m "Add PACS-ARCHIVES PG"
-   git push -u origin add-pacs-archives
-   gh pr create --base main --title "Add PACS-ARCHIVES PG" \
-     --body "Multi-source PG for PACS imaging archives."
-   ```
+5. The PR creation page opens. Confirm the title and click **Create pull
+   request**.
 
-4. Watch the PR. The **PR Preview** workflow runs and posts a sticky comment
+6. Watch the PR. The **PR Preview** workflow runs and posts a sticky comment
    showing the new PG, its 3 OR condition blocks, and security level.
 
 5. Merge the PR.
@@ -425,18 +424,16 @@ including `PACS-ARCHIVES`.
 **Goal:** Tighten classification on `EHR-SERVERS` by adding a second connector
 signal (CrowdStrike trust) to Block 2.
 
-**Steps:**
+**Steps (GitHub web UI, no terminal needed):**
 
-1. From a terminal:
+1. Open `policy-groups.yaml` in the browser:
+   `https://github.com/<owner>/<repo>/blob/main/policy-groups.yaml`
 
-   ```bash
-   git checkout main && git pull && git checkout -b ehr-tighten-trust
-   ```
-
-2. Open `policy-groups.yaml`. Find the `EHR-SERVERS` entry. Locate Block 2
-   (the single `core.trustAttributes CONTAINS "Known in ServiceNow"`
-   condition). Add a second condition to the same block so both must match
-   (AND logic within one block):
+2. Click the pencil icon (top-right) to open the web editor. Find the
+   `EHR-SERVERS` entry, locate Block 2 (the single
+   `core.trustAttributes CONTAINS "Known in ServiceNow"` condition), and add
+   a second condition to the same block so both must match (AND logic within
+   one block):
 
    ```yaml
    # Change Block 2 from:
@@ -449,21 +446,19 @@ signal (CrowdStrike trust) to Block 2.
                - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in CrowdStrike"] }
    ```
 
-3. Commit, push, and open a PR:
+3. Click **Commit changes...** (top-right). In the dialog:
+   - Commit message: `Tighten EHR-SERVERS: require ServiceNow AND CrowdStrike trust`
+   - Extended description (optional): `Block 2 now requires both ServiceNow and CrowdStrike trust attributes.`
+   - Select **Create a new branch for this commit and start a pull request**
+   - Branch name: `ehr-tighten-trust`
+   - Click **Propose changes**
 
-   ```bash
-   git add policy-groups.yaml
-   git commit -m "Tighten EHR-SERVERS: require ServiceNow AND CrowdStrike trust"
-   git push -u origin ehr-tighten-trust
-   gh pr create --base main \
-     --title "Tighten EHR-SERVERS trust criteria" \
-     --body "Block 2 now requires both ServiceNow and CrowdStrike trust attributes."
-   ```
+4. The PR creation page opens. Click **Create pull request**. The preview
+   comment shows the criteria diff: one new condition added to `EHR-SERVERS`
+   Block 2.
 
-4. The preview comment shows the criteria diff: one new condition added to
-   `EHR-SERVERS` Block 2.
-
-5. Merge the PR. `apply.yml` updates the PG in CCC.
+5. Click **Merge pull request** > **Confirm merge**. `apply.yml` runs on the
+   merge and updates the PG in CCC.
 
 **Expected result:** `EHR-SERVERS` PG now requires BOTH trust attributes when
 the connector signal is the discriminator.
@@ -482,15 +477,13 @@ to the original single ServiceNow condition.
 to `FRSTR-ALLOW-HTTPS` (e.g., the imaging system migrated to a web-based
 PACS).
 
-**Steps:**
+**Steps (GitHub web UI, no terminal needed):**
 
-1. From a terminal:
+1. Open `policies.yaml` in the browser:
+   `https://github.com/<owner>/<repo>/blob/main/policies.yaml`
 
-   ```bash
-   git checkout main && git pull && git checkout -b imaging-ehr-https
-   ```
-
-2. Open `policies.yaml`. Find the `IMAGING-to-EHR-SERVERS` entry. Change:
+2. Click the pencil icon (top-right) to open the web editor. Find the
+   `IMAGING-to-EHR-SERVERS` entry and change:
 
    ```yaml
    security_profile: FRSTR-ALLOW-DICOM
@@ -502,21 +495,19 @@ PACS).
    security_profile: FRSTR-ALLOW-HTTPS
    ```
 
-3. Commit, push, and open a PR:
+3. Click **Commit changes...** (top-right). In the dialog:
+   - Commit message: `IMAGING>EHR-SERVERS: swap DICOM for HTTPS`
+   - Extended description (optional): `Imaging migrated to web-based PACS; switch from DICOM to HTTPS profile.`
+   - Select **Create a new branch for this commit and start a pull request**
+   - Branch name: `imaging-ehr-https`
+   - Click **Propose changes**
 
-   ```bash
-   git add policies.yaml
-   git commit -m "IMAGING>EHR-SERVERS: swap DICOM for HTTPS"
-   git push -u origin imaging-ehr-https
-   gh pr create --base main \
-     --title "IMAGING>EHR swap to HTTPS" \
-     --body "Imaging migrated to web-based PACS; switch from DICOM to HTTPS profile."
-   ```
+4. The PR creation page opens. Click **Create pull request**. The preview
+   comment shows the security_profile diff with before/after profile names
+   and port differences.
 
-4. The preview comment shows the security_profile diff with before/after
-   profile names and port differences.
-
-5. Merge the PR. `apply.yml` updates the policy in CCC.
+5. Click **Merge pull request** > **Confirm merge**. `apply.yml` runs and
+   updates the policy in CCC.
 
 **Expected result:** The `IMAGING > EHR-SERVERS` policy now references
 `FRSTR-ALLOW-HTTPS` instead of `FRSTR-ALLOW-DICOM`.
@@ -581,24 +572,28 @@ CCC UI, then triggering the drift check.
 **Goal:** Show the GitOps audit trail of moving all policies from
 `MONITOR_ONLY` to `MONITOR_AND_ENFORCE`.
 
-**Steps:**
+**Steps (GitHub web UI, no terminal needed):**
 
-1. From a terminal:
+1. From the repo home page, click the **Releases** link in the right sidebar
+   (or navigate to `https://github.com/<owner>/<repo>/releases`).
 
-   ```bash
-   git checkout main && git pull
-   git tag -a v1.0.0 -m "Promote to enforcement"
-   git push origin v1.0.0
-   ```
+2. Click **Draft a new release**.
 
-2. In GitHub, navigate to **Releases**. Click the new `v1.0.0` tag. Click
-   **Create release**. Add release notes if desired. Click **Publish release**.
+3. **Choose a tag** dropdown > type `v1.0.0` > select **Create new tag:
+   v1.0.0 on publish**.
 
-3. The **Promote to enforcement** workflow (`promote.yml`) runs automatically
-   on the publish event. Watch the **Actions** tab for the run.
+4. **Target** dropdown: confirm `main`.
 
-4. When the job finishes, it appends a promotion summary to the release body
-   (visible on the Releases page).
+5. **Release title**: `Promote to enforcement`
+
+6. Description (optional): `Flip all 36 policies in FRSTR-HOSPITAL from MONITOR_ONLY to MONITOR_AND_ENFORCE.`
+
+7. Click **Publish release**.
+
+8. The **Promote to enforcement** workflow (`promote.yml`) fires automatically
+   on the publish event. Click the **Actions** tab and watch the run. When
+   the job finishes, the workflow appends a promotion summary to the release
+   body (visible back on the Releases page).
 
 **Expected result:** All 36 policies in `FRSTR-HOSPITAL` flip from
 `MONITOR_ONLY` to `MONITOR_AND_ENFORCE`.
