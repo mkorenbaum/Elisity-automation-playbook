@@ -289,9 +289,16 @@ def main() -> int:
             creds, token,
             f"/api/policy/v1/policy-sets/{ps_id}/policies?size=1000",
         ) or {}
-        # Filter out CCC-managed reflection (Return) policies — they're
-        # auto-created with bidirectional pairs; CCC owns their lifecycle.
-        live_pols = [p for p in pol_listing.get("content", []) if not p.get("isReflection")]
+        all_pols = pol_listing.get("content", [])
+        # Primary policies (the ones the YAML declares).
+        live_pols = [p for p in all_pols if not p.get("isReflection")]
+        # Reflection policies (CCC-managed `<src> > <dst> Return`).
+        # We don't manage their full shape, but their state DOES need
+        # to track the parent's declared state — when an operator flips
+        # a bidirectional policy in CCC, both the primary AND its Return
+        # show up as ENFORCE in the matrix UI. Drift must report both
+        # so the count matches what's visibly flipped.
+        reflection_pols = [p for p in all_pols if p.get("isReflection")]
         live_pols_by_name = {p["name"]: p for p in live_pols}
 
         # CCC names policies "<src> > <dst>"; the YAML `name` field is just
@@ -313,7 +320,7 @@ def main() -> int:
         else:
             all_promoted = False
 
-        # (c) Orphan detection — live policies not declared in YAML
+        # (c) Orphan detection — live primary policies not declared in YAML
         for live in live_pols:
             if live["name"] not in declared_by_ccc_name:
                 drift_rows.append(
@@ -336,6 +343,29 @@ def main() -> int:
                         drift_rows.append(
                             f"| Policy | `{ccc_name}` | `{k}`: repo=`{decl_sig[k]}` != live=`{live_sig.get(k)}` |"
                         )
+
+        # (d) Reflection-policy state drift — when an operator flips a
+        # bidirectional policy, CCC auto-flips its Return reflection. Both
+        # cells appear flipped in the matrix UI. We report both so the
+        # drift count matches the visible state. The primary's parent is
+        # found by stripping the trailing " Return" from the name.
+        for refl in reflection_pols:
+            refl_name = refl.get("name", "")
+            parent_name = refl_name[:-len(" Return")] if refl_name.endswith(" Return") else None
+            if not parent_name:
+                continue
+            parent_decl = declared_by_ccc_name.get(parent_name)
+            if not parent_decl:
+                # Reflection of an orphan parent — primary already flagged above.
+                continue
+            decl_state = parent_decl.get("state", "MONITOR_ONLY")
+            live_state = refl.get("monitorMode", "MONITOR_ONLY")
+            if all_promoted and decl_state == "MONITOR_ONLY" and live_state == "MONITOR_AND_ENFORCE":
+                continue  # post-promotion mask
+            if decl_state != live_state:
+                drift_rows.append(
+                    f"| Policy | `{refl_name}` | `state` (reflection): repo=`{decl_state}` != live=`{live_state}` (auto-tied to parent) |"
+                )
 
     # ── Report ───────────────────────────────────────────────────
     print("## Drift Check -- Git source-of-truth vs CCC live state")
