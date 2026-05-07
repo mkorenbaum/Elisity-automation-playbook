@@ -74,6 +74,61 @@ def ccc_post(creds: dict, token: str, path: str, body: dict) -> Any:
     return None
 
 
+def ccc_put(creds: dict, token: str, path: str, body: dict) -> Any:
+    """PUT for in-place SP updates. Endpoint:
+    /api/policy/v1/security-profiles/{id} (verified 2026-05-07)."""
+    base = creds["ccc_url"].rstrip("/")
+    body_path = "/tmp/.apply-sp-put.json"
+    with open(body_path, "w") as f:
+        json.dump(body, f)
+    proc = subprocess.run(
+        ["python3", str(CCC_PY), "call", "--method", "PUT",
+         "--token", token, "--body-file", body_path,
+         "--accept-status", "200,204",
+         f"{base}{path}"],
+        text=True, capture_output=True, check=True,
+    )
+    os.unlink(body_path)
+    return None
+
+
+def _live_rule_signature(live_sp: dict) -> str:
+    """Canonical (protocol, dst, permit) tuples from CCC's securityRules[] read shape."""
+    rules = []
+    for r in live_sp.get("securityRules", []) or []:
+        dsts = r.get("destinationPorts") or [{}]
+        first = dsts[0] if dsts else {}
+        if first.get("any"):
+            dst = "Any"
+        else:
+            start, end = first.get("start"), first.get("end")
+            if start is not None and end is not None:
+                dst = str(start) if start == end else f"{start}-{end}"
+            else:
+                dst = "Any"
+        rules.append({
+            "protocol": r.get("protocol"),
+            "dst": dst,
+            "permit": bool(r.get("action", True)),
+        })
+    return json.dumps(sorted(rules, key=lambda x: json.dumps(x, sort_keys=True)),
+                      sort_keys=True)
+
+
+def _declared_rule_signature(rule_set: list[dict]) -> str:
+    """Canonical signature from the write-time ruleSet[].property shape."""
+    rules = []
+    for entry in rule_set or []:
+        prop = entry.get("property", {}) or {}
+        rules.append({
+            "protocol": prop.get("protocol"),
+            "dst": prop.get("destinationPorts", "Any"),
+            "permit": bool(prop.get("permit", True)),
+        })
+    return json.dumps(sorted(rules, key=lambda x: json.dumps(x, sort_keys=True)),
+                      sort_keys=True)
+
+
 def build_rule_set(rules: list[dict]) -> list[dict]:
     """Convert YAML rules to CCC ruleSet format.
 
@@ -132,32 +187,56 @@ def main() -> int:
     existing_by_name = {sp["name"]: sp for sp in existing_sps}
 
     created: list[str] = []
+    updated: list[str] = []
     skipped: list[str] = []
 
     for sp in profiles:
         name = sp["name"]
-        if name in existing_by_name:
-            skipped.append(name)
-            continue
-
+        rule_set = build_rule_set(sp.get("rules", []))
         body = {
             "name": name,
             "description": sp.get("description", "").strip(),
-            "ruleSet": build_rule_set(sp.get("rules", [])),
+            "ruleSet": rule_set,
         }
+
+        existing_sp = existing_by_name.get(name)
+        if existing_sp is not None:
+            # Idempotent UPDATE — when CCC drifted from YAML (e.g. an
+            # operator manually edited the rule set in the UI), apply
+            # PUTs the SP back to the declared shape.
+            drift = (
+                (existing_sp.get("description") or "").strip() != body["description"]
+                or _live_rule_signature(existing_sp) != _declared_rule_signature(rule_set)
+            )
+            if not drift:
+                skipped.append(name)
+                continue
+            ccc_put(
+                creds, token,
+                f"/api/policy/v1/security-profiles/{existing_sp['id']}",
+                body,
+            )
+            updated.append(name)
+            continue
+
         ccc_post(creds, token, "/api/policy/v1/security-profiles", body)
         created.append(name)
 
     print("## Security Profiles")
     print()
     print(f"- Created: **{len(created)}**")
-    print(f"- Already exist: **{len(skipped)}**")
+    print(f"- Updated (drift reset): **{len(updated)}**")
+    print(f"- Already in sync: **{len(skipped)}**")
     if created:
         print("\n### Created")
         for n in created:
             print(f"- `{n}`")
+    if updated:
+        print("\n### Updated (live state reset to YAML)")
+        for n in updated:
+            print(f"- `{n}`")
     if skipped:
-        print("\n### Skipped (already exist)")
+        print("\n### Already in sync")
         for n in skipped:
             print(f"- `{n}`")
     return 0

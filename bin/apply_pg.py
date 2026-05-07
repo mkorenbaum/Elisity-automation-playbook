@@ -72,6 +72,50 @@ def ccc_post(creds: dict, token: str, path: str, body: dict) -> Any:
     return None
 
 
+def ccc_put(creds: dict, token: str, path: str, body: dict) -> Any:
+    """PUT for in-place PG updates.
+
+    PG update endpoint is `/api/policy-group/v2/policy-groups/{id}` —
+    note the prefix differs from the POST/list path which is
+    `/api/policy/v2/policy-groups`. Verified 2026-05-07.
+    """
+    base = creds["ccc_url"].rstrip("/")
+    body_path = "/tmp/.apply-pg-put.json"
+    with open(body_path, "w") as f:
+        json.dump(body, f)
+    proc = subprocess.run(
+        ["python3", str(CCC_PY), "call", "--method", "PUT",
+         "--token", token, "--body-file", body_path,
+         "--accept-status", "200,204",
+         f"{base}{path}"],
+        text=True, capture_output=True, check=True,
+    )
+    os.unlink(body_path)
+    if proc.stdout.strip():
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _block_signature(blocks: list[dict]) -> str:
+    """Canonical key for conditionBlocks comparison — order-independent."""
+    canon = []
+    for block in blocks:
+        conds = block.get("conditions", []) or []
+        norm_conds = []
+        for c in conds:
+            norm_conds.append({
+                "attr": c.get("attributeFqdn") or c.get("attribute"),
+                "op": c.get("operator"),
+                "vals": sorted(c.get("value") or c.get("values") or []),
+            })
+        canon.append(sorted(norm_conds, key=lambda x: (x.get("attr") or "")))
+    return json.dumps(sorted(canon, key=lambda b: json.dumps(b, sort_keys=True)),
+                      sort_keys=True)
+
+
 def resolve_pg_label_ids(creds: dict, token: str, label_names: list[str]) -> list[str]:
     """Resolve PG label names to CCC IDs."""
     listing = ccc_get(creds, token, "/api/policy/v1/policy-group-label") or {}
@@ -128,16 +172,15 @@ def main() -> int:
         label_id_map = {lb["name"]: lb["id"] for lb in items}
 
     created: list[str] = []
+    updated: list[str] = []
     skipped: list[str] = []
 
     for pg in policy_groups:
         name = pg["name"]
-        if name in existing_by_name:
-            skipped.append(name)
-            continue
 
         # Resolve label names to IDs
         label_ids = [label_id_map[ln] for ln in pg.get("labels", []) if ln in label_id_map]
+        decl_blocks = build_condition_blocks(pg.get("match", {}))
 
         body = {
             "name": name,
@@ -147,10 +190,37 @@ def main() -> int:
             "securityLevel": pg.get("security_level", 1),
             "autoLockDevices": pg.get("auto_lock_devices", False),
             "labels": label_ids,
-            "matchingCriteria": {
-                "conditionBlocks": build_condition_blocks(pg.get("match", {})),
-            },
+            "matchingCriteria": {"conditionBlocks": decl_blocks},
         }
+
+        existing_pg = existing_by_name.get(name)
+        if existing_pg is not None:
+            # Idempotent UPDATE — when CCC drifted from YAML (e.g. an
+            # operator manually changed genre / security level / match
+            # criteria in the UI), apply PUTs the PG back to the
+            # declared shape.
+            live_label_ids = sorted([
+                l["id"] if isinstance(l, dict) else l
+                for l in (existing_pg.get("labels") or [])
+            ])
+            live_blocks = (existing_pg.get("matchingCriteria") or {}).get("conditionBlocks", [])
+            drift_fields = (
+                (existing_pg.get("description") or "").strip() != body["description"]
+                or (existing_pg.get("genre") or "None") != body["genre"]
+                or existing_pg.get("securityLevel") != body["securityLevel"]
+                or live_label_ids != sorted(label_ids)
+                or _block_signature(live_blocks) != _block_signature(decl_blocks)
+            )
+            if not drift_fields:
+                skipped.append(name)
+                continue
+            ccc_put(
+                creds, token,
+                f"/api/policy-group/v2/policy-groups/{existing_pg['id']}",
+                body,
+            )
+            updated.append(name)
+            continue
 
         ccc_post(creds, token, "/api/policy/v2/policy-groups/dynamic", body)
         created.append(name)
@@ -158,13 +228,18 @@ def main() -> int:
     print("## Policy Groups")
     print()
     print(f"- Created: **{len(created)}**")
-    print(f"- Already exist: **{len(skipped)}**")
+    print(f"- Updated (drift reset): **{len(updated)}**")
+    print(f"- Already in sync: **{len(skipped)}**")
     if created:
         print("\n### Created")
         for n in created:
             print(f"- `{n}`")
+    if updated:
+        print("\n### Updated (live state reset to YAML)")
+        for n in updated:
+            print(f"- `{n}`")
     if skipped:
-        print("\n### Skipped (already exist)")
+        print("\n### Already in sync")
         for n in skipped:
             print(f"- `{n}`")
     return 0

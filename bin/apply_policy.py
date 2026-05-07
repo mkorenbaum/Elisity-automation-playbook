@@ -76,6 +76,28 @@ def ccc_post(creds: dict, token: str, path: str, body: dict) -> Any:
     return None
 
 
+def ccc_put(creds: dict, token: str, path: str, body: dict) -> Any:
+    """PUT for in-place policy updates. Mirrors promote.py's pattern."""
+    base = creds["ccc_url"].rstrip("/")
+    body_path = "/tmp/.apply-policy-put.json"
+    with open(body_path, "w") as f:
+        json.dump(body, f)
+    proc = subprocess.run(
+        ["python3", str(CCC_PY), "call", "--method", "PUT",
+         "--token", token, "--body-file", body_path,
+         "--accept-status", "200,204",
+         f"{base}{path}"],
+        text=True, capture_output=True, check=True,
+    )
+    os.unlink(body_path)
+    if proc.stdout.strip():
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
 def resolve_policy_set_id(creds: dict, token: str, ps_name: str) -> str:
     listing = ccc_get(creds, token, "/api/policy/v1/policy-sets") or {}
     for item in listing.get("content", []):
@@ -123,6 +145,7 @@ def main() -> int:
 
     created: list[str] = []
     skipped: list[str] = []
+    updated: list[str] = []
     errors: list[str] = []
 
     for ps_name, ps_policies in policies_by_ps.items():
@@ -148,10 +171,6 @@ def main() -> int:
             # any other format with 400 "different format than expected".
             ccc_name = f"{src_pg_name} > {dst_pg_name}"
 
-            if ccc_name in existing_by_name:
-                skipped.append(ccc_name)
-                continue
-
             if src_pg_name not in pg_by_name:
                 errors.append(f"`{yaml_name}`: source PG `{src_pg_name}` not found")
                 continue
@@ -165,15 +184,51 @@ def main() -> int:
             direction = pol.get("direction", "BIDIRECTIONAL")
             is_mirrored = direction == "BIDIRECTIONAL"
             final_action_id = permit_id if pol.get("final_action", "PERMIT") == "PERMIT" else deny_id
+            target_state = pol.get("state", "MONITOR_ONLY")
+            sp_id = sp_by_name[sp_name]
+
+            existing_pol = existing_by_name.get(ccc_name)
+            if existing_pol is not None:
+                # Idempotent UPDATE — when CCC drifted from YAML (e.g. an
+                # operator manually flipped monitorMode in the UI), apply
+                # PUTs the policy back to the declared shape. Mirrors
+                # promote.py's PUT pattern.
+                live_state = existing_pol.get("monitorMode", "MONITOR_ONLY")
+                live_sp = existing_pol.get("securityProfileId", "")
+                live_final = existing_pol.get("finalActionId", "")
+                live_mirrored = existing_pol.get("isMirrored", False)
+                if (live_state == target_state
+                        and live_sp == sp_id
+                        and live_final == final_action_id
+                        and live_mirrored == is_mirrored):
+                    skipped.append(ccc_name)
+                    continue
+                # Drift detected — PUT to reset
+                update_body = {
+                    "name": existing_pol["name"],
+                    "description": existing_pol.get("description", ""),
+                    "monitorMode": target_state,
+                    "securityProfiles": [sp_id],
+                    "finalAction": final_action_id,
+                    "isMirrored": is_mirrored,
+                    "isCustomName": False,
+                }
+                ccc_put(
+                    creds, token,
+                    f"/api/policy/v1/policy-sets/{ps_id}/policies/{existing_pol['id']}",
+                    update_body,
+                )
+                updated.append(ccc_name)
+                continue
 
             body = {
                 "name": ccc_name,
                 "description": pol.get("description", "").strip() if pol.get("description") else "",
                 "srcPolicyGroup": pg_by_name[src_pg_name],
                 "dstPolicyGroup": pg_by_name[dst_pg_name],
-                "securityProfiles": [sp_by_name[sp_name]],
+                "securityProfiles": [sp_id],
                 "finalAction": final_action_id,
-                "monitorMode": pol.get("state", "MONITOR_ONLY"),
+                "monitorMode": target_state,
                 "isMirrored": is_mirrored,
                 "isCustomName": False,
             }
@@ -188,15 +243,20 @@ def main() -> int:
     print("## Policies")
     print()
     print(f"- Created: **{len(created)}**")
-    print(f"- Already exist: **{len(skipped)}**")
+    print(f"- Updated (drift reset): **{len(updated)}**")
+    print(f"- Already in sync: **{len(skipped)}**")
     if errors:
         print(f"- Errors: **{len(errors)}**")
     if created:
         print("\n### Created")
         for n in created:
             print(f"- `{n}`")
+    if updated:
+        print("\n### Updated (live state reset to YAML)")
+        for n in updated:
+            print(f"- `{n}`")
     if skipped:
-        print("\n### Skipped (already exist)")
+        print("\n### Already in sync")
         for n in skipped:
             print(f"- `{n}`")
     if errors:
