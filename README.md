@@ -370,26 +370,9 @@ classification model.
 
 2. Click the pencil icon (top-right of the file view) to open the web editor.
 
-3. Scroll to the end of the `policy_groups:` list. On a new line, paste this
-   block (match the existing 2-space indent):
+3. Scroll to the end of the `policy_groups:` list. Place the cursor on a fresh blank line, then copy and paste the block at the bottom of this scenario (the un-indented block immediately under "**Block to paste**" below).
 
-   ```yaml
-     - name: PACS-ARCHIVES
-       description: |
-         Picture Archiving and Communication Servers, DICOM image stores.
-       type: DYNAMIC
-       security_level: 3
-       auto_lock_devices: false
-       labels: [FORRESTER-DEMO]
-       match:
-         condition_blocks:
-           - conditions:
-               - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
-           - conditions:
-               - { attribute: medigate.deviceClass, operator: EQ, values: ["Imaging"] }
-           - conditions:
-               - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
-   ```
+> **Indentation matters.** The dash before `name:` should land at column 3 (2 spaces). Field keys (`description:`, `type:`, etc.) should land at column 5 (4 spaces). If GitHub's web editor flattens leading whitespace on paste, eyeball the existing PGs in the file — every field after the first PG (`INFUSION-PUMPS`) shows the correct depth. If your pasted block looks shallower than the existing entries, select the field lines and add 2 more leading spaces.
 
 4. Click **Commit changes...** (top-right). In the dialog:
    - Commit message: `Add PACS-ARCHIVES PG`
@@ -417,6 +400,27 @@ including `PACS-ARCHIVES`.
 
 **Reset:** Run the revert workflow (Scenario 7) with PG name `PACS-ARCHIVES`.
 
+**Block to paste** (everything between the fences, exactly as shown):
+
+```yaml
+  - name: PACS-ARCHIVES
+    description: |
+      Picture Archiving and Communication Servers, DICOM image stores.
+    type: DYNAMIC
+    genre: IT
+    security_level: 3
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+        - conditions:
+            - { attribute: medigate.deviceClass, operator: EQ, values: ["Imaging"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
+```
+
 ---
 
 ### Scenario 3: Update PG match criteria via PR
@@ -429,22 +433,9 @@ signal (CrowdStrike trust) to Block 2.
 1. Open `policy-groups.yaml` in the browser:
    `https://github.com/<owner>/<repo>/blob/main/policy-groups.yaml`
 
-2. Click the pencil icon (top-right) to open the web editor. Find the
-   `EHR-SERVERS` entry, locate Block 2 (the single
-   `core.trustAttributes CONTAINS "Known in ServiceNow"` condition), and add
-   a second condition to the same block so both must match (AND logic within
-   one block):
+2. Click the pencil icon (top-right) to open the web editor. Find the `EHR-SERVERS` entry, locate Block 2 (the single `core.trustAttributes CONTAINS "Known in ServiceNow"` condition), and add a second `core.trustAttributes` condition for `"Known in CrowdStrike"` inside the same conditions list. The before/after snippets are at the bottom of this scenario.
 
-   ```yaml
-   # Change Block 2 from:
-           - conditions:
-               - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
-
-   # To (AND-ed within the same block):
-           - conditions:
-               - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
-               - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in CrowdStrike"] }
-   ```
+> **Indentation matters.** The dash before `conditions:` should land at column 9 (8 spaces), and the dash before `{ attribute: ... }` at column 13 (12 spaces). Match what's already there for the other PGs.
 
 3. Click **Commit changes...** (top-right). In the dialog:
    - Commit message: `Tighten EHR-SERVERS: require ServiceNow AND CrowdStrike trust`
@@ -468,6 +459,21 @@ Criteria > Block 2 shows two AND-ed conditions.
 
 **Reset:** Revert the merge commit, or push a follow-up PR restoring Block 2
 to the original single ServiceNow condition.
+
+**Before** (the existing Block 2 in `EHR-SERVERS`):
+
+```yaml
+        - conditions:
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
+```
+
+**After** (add the second condition inside the same conditions list, AND-ed):
+
+```yaml
+        - conditions:
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in ServiceNow"] }
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in CrowdStrike"] }
+```
 
 ---
 
