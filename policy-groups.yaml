@@ -177,19 +177,3 @@ policy_groups:
       condition_blocks:
         - conditions:
             - { attribute: core.label, operator: EQ, values: ["QUARANTINE"] }
-  - name: PACS-ARCHIVES
-    description: |
-      Picture Archiving and Communication Servers, DICOM image stores.
-    type: DYNAMIC
-    genre: IT
-    security_level: 3
-    auto_lock_devices: false
-    labels: [FORRESTER-DEMO]
-    match:
-      condition_blocks:
-        - conditions:
-            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
-        - conditions:
-            - { attribute: medigate.deviceClass, operator: EQ, values: ["Imaging"] }
-        - conditions:
-            - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
