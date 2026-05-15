@@ -138,8 +138,8 @@ lands in ISOLATION only when an analyst or SOAR action explicitly tags it.
 | `PATIENT-MONITORS` | 3 | `core.normalizedClass EQ "Medical Device"` | `medigate.deviceClass EQ "Patient Devices"` | `core.label EQ "PATIENT-MONITORS"` |
 | `IMAGING` | 3 | `core.normalizedClass EQ "Medical Device"` | `medigate.deviceClass EQ "Imaging"` | `core.label EQ "IMAGING"` |
 | `EHR-SERVERS` | 3 | `core.normalizedClass EQ "Server Appliance and Storage"` | `core.trustAttributes CONTAINS "Known in ServiceNow"` | `core.label EQ "EHR-SERVERS"` |
-| `VERIFIED-SERVERS` | 2 | `core.normalizedClass EQ "Server Appliance and Storage"` | `core.trustAttributes CONTAINS "Known in CrowdStrike"` | `core.label EQ "VERIFIED-SERVERS"` |
 | `VERIFIED-PCS` | 1 | `core.normalizedClass EQ "PC"` | `core.trustAttributes CONTAINS "Known in Microsoft Defender"` | `core.label EQ "VERIFIED-PCS"` |
+| `VERIFIED-SERVERS` | 2 | `core.normalizedClass EQ "Server Appliance and Storage"` | `core.trustAttributes CONTAINS "Known in CrowdStrike"` | `core.label EQ "VERIFIED-SERVERS"` |
 | `BUILDING-MANAGEMENT` | 3 | `core.normalizedClass EQ "Building Management"` | `armis.deviceType EQ "BMS Controller"` | `core.label EQ "BUILDING-MANAGEMENT"` |
 | `ISOLATION` | 1 | _(none)_ | _(none)_ | `core.label EQ "QUARANTINE"` |
 
@@ -165,7 +165,7 @@ mirrors the upper and is shown as `.` below.
 INF       self  DENY  DENY  HL7   DENY  DENY  DENY  DENY
 PAT        .    self  DENY  HL7   DENY  DENY  DENY  DENY
 IMG        .     .    self  DCM   DENY  DENY  DENY  DENY
-EHR        .     .     .    self  ANY*  ANY*  DENY  DENY
+EHR        .     .     .    self  ANY*  DENY  DENY  DENY
 VRF-S      .     .     .     .    self  ANY*  DENY  DENY
 VRF-P      .     .     .     .     .    self  DENY  DENY
 BMS        .     .     .     .     .     .    self  DENY
@@ -201,9 +201,9 @@ DENY).
 | Self (Allow All) | 6 | `Allow All` |
 | Self (custom) | 2 | `FRSTR-BMS-MODBUS`, `FRSTR-QUARANTINE` |
 | Clinical-specific | 3 | `FRSTR-ALLOW-HL7` x2, `FRSTR-ALLOW-DICOM` x1 |
-| Trusted-zone permit | 3 | `Allow All` |
-| Deny-all | 22 | `Deny All` |
-| **Total** | **36** | **22 Deny All + 9 Allow All + 5 custom** |
+| Trusted-zone permit | 2 | `Allow All` |
+| Deny-all | 23 | `Deny All` |
+| **Total** | **36** | **23 Deny All + 8 Allow All + 5 custom** |
 
 The CCC policy list renders these profile names verbatim. An analyst scanning
 the security-profile column reads the matrix intent at a glance: clinical
@@ -213,21 +213,22 @@ permit-all, and everything else is deny-all.
 All 36 policies deploy in `MONITOR_ONLY`. Tagging a release flips them to
 `MONITOR_AND_ENFORCE` via `promote.yml`.
 
-### The 6 permitted lateral paths
+### The 5 permitted lateral paths
 
-Only 6 of 28 inter-PG pairs allow traffic. The remaining 22 are explicit
+Only 5 of 28 inter-PG pairs allow traffic. The remaining 23 are explicit
 deny-all:
 
 1. **Infusion pumps to EHR servers** (HL7, TCP 2575)
 2. **Patient monitors to EHR servers** (HL7, TCP 2575)
 3. **Imaging to EHR servers** (DICOM, TCP 104/11112/11113)
 4. **EHR servers to verified servers** (Allow All, trusted zone)
-5. **EHR servers to verified PCs** (Allow All, trusted zone)
-6. **Verified servers to verified PCs** (Allow All, trusted zone)
+5. **Verified servers to verified PCs** (Allow All, trusted zone)
 
-Paths 1-3 are clinical workflows restricted to a single protocol. Paths 4-6
-are trusted-infrastructure full mesh between EHR servers, CrowdStrike-verified
-servers, and Defender-onboarded PCs.
+Paths 1-3 are clinical workflows restricted to a single protocol. Paths 4-5
+are the trusted-infrastructure lane between EHR servers, CrowdStrike-verified
+servers, and Defender-onboarded PCs. `EHR-SERVERS` to `VERIFIED-PCS` is
+deliberately deny-all in the baseline — open that lane explicitly with a
+follow-up PR if a clinical-workstation-to-EHR workflow is approved.
 
 ---
 
@@ -821,8 +822,8 @@ Key schema fields per entry:
 ### `policies.yaml`
 
 Defines the 36-policy segmentation matrix: 8 self-policies (intra-PG),
-3 clinical-specific workflows (HL7/DICOM), 3 trusted-zone permit-all pairs,
-and 22 explicit deny-all pairs. See [The policy matrix](#the-policy-matrix)
+3 clinical-specific workflows (HL7/DICOM), 2 trusted-zone permit-all pairs,
+and 23 explicit deny-all pairs. See [The policy matrix](#the-policy-matrix)
 for the full grid.
 
 Key schema fields per entry:
