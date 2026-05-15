@@ -177,8 +177,7 @@ policy_groups:
       condition_blocks:
         - conditions:
             - { attribute: core.label, operator: EQ, values: ["QUARANTINE"] }
-
-    - name: PACS-ARCHIVES
+  - name: PACS-ARCHIVES
       description: |
         Picture Archiving and Communication Servers, DICOM image stores.
       type: DYNAMIC
