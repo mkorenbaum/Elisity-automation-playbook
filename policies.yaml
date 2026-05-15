@@ -168,12 +168,15 @@ policies:
     policy_set: FRSTR-HOSPITAL
     state: MONITOR_ONLY
 
+  # Baseline: deny-by-default between EHR-SERVERS and VERIFIED-PCS in
+  # simulation. Open this lane explicitly in a follow-up PR once the
+  # required clinical-workstation-to-EHR workflow is approved.
   - name: EHR-SERVERS-to-VERIFIED-PCS
     direction: BIDIRECTIONAL
     source_pg: EHR-SERVERS
     destination_pg: VERIFIED-PCS
-    security_profile: Allow All
-    final_action: PERMIT
+    security_profile: Deny All
+    final_action: DENY
     policy_set: FRSTR-HOSPITAL
     state: MONITOR_ONLY
 

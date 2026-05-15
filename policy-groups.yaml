@@ -99,27 +99,10 @@ policy_groups:
         - conditions:
             - { attribute: core.label, operator: EQ, values: ["EHR-SERVERS"] }
 
-  # 5. Verified servers — CrowdStrike-corroborated server estate
-  - name: VERIFIED-SERVERS
-    description: |
-      Server appliances corroborated by CrowdStrike EDR. The connector
-      signal is the trust attribute "Known in CrowdStrike"; manual
-      label fallback is the ops escape hatch.
-    type: DYNAMIC
-    genre: IT
-    security_level: 2
-    auto_lock_devices: false
-    labels: [FORRESTER-DEMO]
-    match:
-      condition_blocks:
-        - conditions:
-            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
-        - conditions:
-            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in CrowdStrike"] }
-        - conditions:
-            - { attribute: core.label, operator: EQ, values: ["VERIFIED-SERVERS"] }
-
-  # 6. Verified PCs — Defender-onboarded Windows endpoints
+  # 5. Verified PCs — Defender-onboarded Windows endpoints
+  #    Evaluated BEFORE Verified Servers so a multi-classified test
+  #    device lands in the PC group when both PC and Server signals
+  #    are present in IdentityGraph.
   - name: VERIFIED-PCS
     description: |
       Windows PCs corroborated by Microsoft Defender for Endpoint. PC
@@ -138,6 +121,26 @@ policy_groups:
             - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in Microsoft Defender"] }
         - conditions:
             - { attribute: core.label, operator: EQ, values: ["VERIFIED-PCS"] }
+
+  # 6. Verified servers — CrowdStrike-corroborated server estate
+  - name: VERIFIED-SERVERS
+    description: |
+      Server appliances corroborated by CrowdStrike EDR. The connector
+      signal is the trust attribute "Known in CrowdStrike"; manual
+      label fallback is the ops escape hatch.
+    type: DYNAMIC
+    genre: IT
+    security_level: 2
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+        - conditions:
+            - { attribute: core.trustAttributes, operator: CONTAINS, values: ["Known in CrowdStrike"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["VERIFIED-SERVERS"] }
 
   # 7. Building management — BMS controllers + smart-building OT
   - name: BUILDING-MANAGEMENT
