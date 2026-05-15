@@ -45,6 +45,26 @@ def read_yaml_file(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+# Hold warning strings collected while loading the base-ref YAMLs.
+# Surfaced in the PR preview comment so the reader knows when the diff is
+# computed against an empty base (e.g., main is currently malformed and this
+# PR is the fix).
+BASE_LOAD_WARNINGS: list[str] = []
+
+
+def safe_load_base(ref: str, path: str) -> dict[str, Any]:
+    """Load a YAML file from the given git ref. On parse failure, append a
+    warning and return {} so the preview still renders the PR's intent."""
+    raw = git_show(ref, path) or "{}"
+    try:
+        return yaml.safe_load(raw) or {}
+    except yaml.YAMLError as e:
+        # Trim the parse-error message; CI logs already have the full stack.
+        msg = str(e).splitlines()[0]
+        BASE_LOAD_WARNINGS.append(f"`{path}` at `{ref}` failed to parse ({msg}); treating base as empty.")
+        return {}
+
+
 def diff_lists(main_items: list[dict], pr_items: list[dict], key: str = "name") -> dict:
     main_by_name = {x[key]: x for x in main_items}
     pr_by_name = {x[key]: x for x in pr_items}
@@ -110,16 +130,19 @@ def main() -> int:
     args = parser.parse_args()
 
     # ── Load base (main) and PR versions of all 4 YAMLs ─────────
-    base_ps = yaml.safe_load(git_show(args.base_ref, "policy-set.yaml") or "{}") or {}
+    # Use safe_load_base so a malformed file on the base ref does not crash
+    # the whole preview — important when this PR is itself the fix for a
+    # malformed file on main.
+    base_ps = safe_load_base(args.base_ref, "policy-set.yaml")
     pr_ps = read_yaml_file(REPO_ROOT / "policy-set.yaml")
 
-    base_sps = (yaml.safe_load(git_show(args.base_ref, "security-profiles.yaml") or "{}") or {}).get("security_profiles", [])
+    base_sps = safe_load_base(args.base_ref, "security-profiles.yaml").get("security_profiles", [])
     pr_sps = read_yaml_file(REPO_ROOT / "security-profiles.yaml").get("security_profiles", [])
 
-    base_pgs = (yaml.safe_load(git_show(args.base_ref, "policy-groups.yaml") or "{}") or {}).get("policy_groups", [])
+    base_pgs = safe_load_base(args.base_ref, "policy-groups.yaml").get("policy_groups", [])
     pr_pgs = read_yaml_file(REPO_ROOT / "policy-groups.yaml").get("policy_groups", [])
 
-    base_pols = (yaml.safe_load(git_show(args.base_ref, "policies.yaml") or "{}") or {}).get("policies", [])
+    base_pols = safe_load_base(args.base_ref, "policies.yaml").get("policies", [])
     pr_pols = read_yaml_file(REPO_ROOT / "policies.yaml").get("policies", [])
 
     # ── Diff each section ────────────────────────────────────────
@@ -138,6 +161,12 @@ def main() -> int:
     # ── Render report ────────────────────────────────────────────
     print("## PR Preview -- Elisity Microsegmentation (v2)")
     print()
+    if BASE_LOAD_WARNINGS:
+        print("> :warning: **Base ref load warnings.** The diff was computed against an empty base for the files below.")
+        for w in BASE_LOAD_WARNINGS:
+            print(f"> - {w}")
+        print("> This usually means the file is currently malformed on the base branch and this PR is the fix.")
+        print()
     if total == 0:
         print("> No segmentation changes in this PR.")
         return 0
