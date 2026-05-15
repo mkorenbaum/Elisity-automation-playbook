@@ -169,7 +169,7 @@ policy_groups:
       via explicit tagging. DNS-only egress profile, deny everything
       else. Time-Based Match Criteria auto-reverts.
     type: DYNAMIC
-    genre: None
+    genre: "None"
     security_level: 1
     auto_lock_devices: true
     labels: [FORRESTER-DEMO]
@@ -178,19 +178,20 @@ policy_groups:
         - conditions:
             - { attribute: core.label, operator: EQ, values: ["QUARANTINE"] }
 
-    - name: PACS-ARCHIVES
-      description: |
-        Picture Archiving and Communication Servers, DICOM image stores.
-      type: DYNAMIC
-      genre: IT
-      security_level: 3
-      auto_lock_devices: false
-      labels: [FORRESTER-DEMO]
-      match:
-        condition_blocks:
-          - conditions:
-              - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
-          - conditions:
-              - { attribute: medigate.deviceClass, operator: EQ, values: ["Imaging"] }
-          - conditions:
-              - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
+  # 9. PACS archives — Picture Archiving and Communication Servers, DICOM image stores
+  - name: PACS-ARCHIVES
+    description: |
+      Picture Archiving and Communication Servers, DICOM image stores.
+    type: DYNAMIC
+    genre: IT
+    security_level: 3
+    auto_lock_devices: false
+    labels: [FORRESTER-DEMO]
+    match:
+      condition_blocks:
+        - conditions:
+            - { attribute: core.normalizedClass, operator: EQ, values: ["Server Appliance and Storage"] }
+        - conditions:
+            - { attribute: medigate.deviceClass, operator: EQ, values: ["Imaging"] }
+        - conditions:
+            - { attribute: core.label, operator: EQ, values: ["PACS-ARCHIVES"] }
