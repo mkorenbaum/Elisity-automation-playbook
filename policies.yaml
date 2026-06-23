@@ -175,8 +175,8 @@ policies:
     direction: BIDIRECTIONAL
     source_pg: FRSTR-EHR-SERVERS
     destination_pg: FRSTR-VERIFIED-PCS
-    security_profile: Deny All
-    final_action: DENY
+    security_profile: FRSTR-ALLOW-HTTPS
+    final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
     state: MONITOR_ONLY
 
