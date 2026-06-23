@@ -24,6 +24,13 @@ concurrency:
   group: ccc-apply       # serialize against apply.yml — never both at once
   cancel-in-progress: false
 
+defaults:
+  run:
+    # self-hosted runner default shell is `bash -e` WITHOUT pipefail,
+    # so `cmd | tee log` silently masked make/python failures (apply
+    # reported success while `make demo` exited 2). pipefail fixes that.
+    shell: bash -eo pipefail {0}
+
 jobs:
   promote:
     # Self-hosted: see apply.yml for rationale (insights-demo not reachable
