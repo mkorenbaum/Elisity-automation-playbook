@@ -4,10 +4,11 @@
 # Naming convention:
 #   - Policy Set name carries the FRSTR- prefix (no PG-label mechanism
 #     for policy sets, so the prefix is the only safety boundary).
-#   - The PG Label `FORRESTER-DEMO` is the invisible cleanup tag for
-#     all Policy Groups managed by this demo. Functional PG names stay
-#     clean (INFUSION-PUMPS, IMAGING, etc.) because the label is the
-#     scoping mechanism, not the name.
+#   - PG names are FRSTR- prefixed (e.g. FRSTR-INFUSION-PUMPS) AND carry
+#     the `FORRESTER-DEMO` label. The label is the cleanup tag; the
+#     prefix prevents name collisions with the tenant's own baseline
+#     PGs (insights-demo ships healthcare PGs named `Patient Monitors`,
+#     `Imaging`, etc. and CCC enforces case-insensitive PG-name uniqueness).
 #   - Site label `Hospital` is the existing site on insights-demo.
 #
 # Bootstrap creates these idempotently from a workflow_dispatch action
@@ -27,8 +28,8 @@ policy_set:
 
 # PG label that scopes which Policy Groups participate in this demo.
 # This is the invisible cleanup tag: a PG carries the FORRESTER-DEMO
-# label, but its name (e.g. INFUSION-PUMPS) is unprefixed and reads
-# cleanly in the policy matrix and CCC UI.
+# label; its name is FRSTR- prefixed (e.g. FRSTR-INFUSION-PUMPS) to avoid
+# collisions with the tenant's baseline healthcare PGs.
 policy_group_labels:
   - name: FORRESTER-DEMO
     description: |
