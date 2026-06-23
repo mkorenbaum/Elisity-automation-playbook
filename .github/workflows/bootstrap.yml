@@ -43,9 +43,19 @@ jobs:
 
       - name: Ensure PyYAML is installed
         run: |
-          python3 -m venv /tmp/forrester-venv 2>/dev/null || true
-          /tmp/forrester-venv/bin/pip install --quiet --upgrade PyYAML
-          echo "/tmp/forrester-venv/bin" >> "$GITHUB_PATH"
+          # PyYAML is required by the bin/*.py tooling. Prefer the system
+          # package; fall back to an isolated venv. Fail LOUDLY if neither
+          # yields a working import. The old `2>/dev/null || true` silently
+          # produced a pip-less venv -> confusing exit 1 (resurrected 2026-06-23).
+          if python3 -c 'import yaml' 2>/dev/null; then
+            echo "PyYAML present in system python3 ($(python3 -c 'import yaml; print(yaml.__version__)'))"
+          else
+            echo "System PyYAML missing -- building isolated venv"
+            python3 -m venv /tmp/forrester-venv
+            /tmp/forrester-venv/bin/pip install --quiet --upgrade PyYAML
+            echo "/tmp/forrester-venv/bin" >> "$GITHUB_PATH"
+            /tmp/forrester-venv/bin/python -c 'import yaml; print("PyYAML", yaml.__version__, "(venv)")'
+          fi
 
       - name: Render creds + run bootstrap
         env:

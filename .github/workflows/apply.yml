@@ -40,9 +40,16 @@ jobs:
 
       - name: Ensure ansible + PyYAML are installed
         run: |
-          python3 -m venv /tmp/forrester-venv 2>/dev/null || true
+          # apply runs `ansible-playbook` (Makefile `demo`). ansible is NOT
+          # installed system-wide on the self-hosted runner, so build an
+          # isolated venv with ansible + PyYAML and put it on PATH for the
+          # apply step. Fail LOUDLY on any install error (the old
+          # `2>/dev/null || true` masked a pip-less venv -> exit 1).
+          python3 -m venv /tmp/forrester-venv
           /tmp/forrester-venv/bin/pip install --quiet --upgrade ansible PyYAML
           echo "/tmp/forrester-venv/bin" >> "$GITHUB_PATH"
+          /tmp/forrester-venv/bin/ansible-playbook --version | head -1
+          /tmp/forrester-venv/bin/python -c 'import yaml; print("PyYAML", yaml.__version__)'
 
       - name: Apply YAML to CCC (dependency order)
         env:
