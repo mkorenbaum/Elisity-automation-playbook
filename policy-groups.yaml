@@ -22,7 +22,7 @@
 policy_groups:
 
   # 1. Infusion pumps — IV pumps, network-attached medical devices
-  - name: INFUSION-PUMPS
+  - name: FRSTR-INFUSION-PUMPS
     description: |
       Network-attached IV infusion pumps. Three-source classification:
       core asset-class anchor, Armis CPS signal, manual label fallback.
@@ -41,7 +41,7 @@ policy_groups:
             - { attribute: core.label, operator: EQ, values: ["INFUSION-PUMPS"] }
 
   # 2. Patient monitors — bedside vitals + telemetry
-  - name: PATIENT-MONITORS
+  - name: FRSTR-PATIENT-MONITORS
     description: |
       Bedside patient monitoring devices (vitals, telemetry, neonatal).
       Three-source classification with Medigate CPS as the connector
@@ -61,7 +61,7 @@ policy_groups:
             - { attribute: core.label, operator: EQ, values: ["PATIENT-MONITORS"] }
 
   # 3. Imaging — modalities + acquisition workstations
-  - name: IMAGING
+  - name: FRSTR-IMAGING
     description: |
       Imaging modalities (CT, MR, X-ray) and acquisition workstations.
       Medigate CPS classifier signals deviceClass=Imaging.
@@ -80,7 +80,7 @@ policy_groups:
             - { attribute: core.label, operator: EQ, values: ["IMAGING"] }
 
   # 4. EHR servers — Epic / Cerner / etc, gated by ServiceNow CMDB trust
-  - name: EHR-SERVERS
+  - name: FRSTR-EHR-SERVERS
     description: |
       Electronic Health Record servers. Server asset class with
       ServiceNow CMDB trust as the connector signal; manual label
@@ -103,7 +103,7 @@ policy_groups:
   #    Evaluated BEFORE Verified Servers so a multi-classified test
   #    device lands in the PC group when both PC and Server signals
   #    are present in IdentityGraph.
-  - name: VERIFIED-PCS
+  - name: FRSTR-VERIFIED-PCS
     description: |
       Windows PCs corroborated by Microsoft Defender for Endpoint. PC
       asset class with Defender as the connector trust signal; manual
@@ -123,7 +123,7 @@ policy_groups:
             - { attribute: core.label, operator: EQ, values: ["VERIFIED-PCS"] }
 
   # 6. Verified servers — CrowdStrike-corroborated server estate
-  - name: VERIFIED-SERVERS
+  - name: FRSTR-VERIFIED-SERVERS
     description: |
       Server appliances corroborated by CrowdStrike EDR. The connector
       signal is the trust attribute "Known in CrowdStrike"; manual
@@ -143,7 +143,7 @@ policy_groups:
             - { attribute: core.label, operator: EQ, values: ["VERIFIED-SERVERS"] }
 
   # 7. Building management — BMS controllers + smart-building OT
-  - name: BUILDING-MANAGEMENT
+  - name: FRSTR-BUILDING-MANAGEMENT
     description: |
       Building automation (HVAC, BMS controllers, smart-building OT).
       Building Management asset class anchors; Armis CPS classifier
@@ -166,7 +166,7 @@ policy_groups:
   #    Intentionally a single block (no core/connector blocks): a
   #    device only lands here when an analyst or SOAR action explicitly
   #    tags it. Time-Based Match Criteria can auto-revert the tag.
-  - name: ISOLATION
+  - name: FRSTR-ISOLATION
     description: |
       Quarantine zone for incident response. Devices land here only
       via explicit tagging. DNS-only egress profile, deny everything

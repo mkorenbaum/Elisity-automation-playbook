@@ -42,8 +42,8 @@ policies:
 
   - name: INFUSION-PUMPS-self
     direction: SELF
-    source_pg: INFUSION-PUMPS
-    destination_pg: INFUSION-PUMPS
+    source_pg: FRSTR-INFUSION-PUMPS
+    destination_pg: FRSTR-INFUSION-PUMPS
     security_profile: Allow All
     final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
@@ -51,8 +51,8 @@ policies:
 
   - name: PATIENT-MONITORS-self
     direction: SELF
-    source_pg: PATIENT-MONITORS
-    destination_pg: PATIENT-MONITORS
+    source_pg: FRSTR-PATIENT-MONITORS
+    destination_pg: FRSTR-PATIENT-MONITORS
     security_profile: Allow All
     final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
@@ -60,8 +60,8 @@ policies:
 
   - name: IMAGING-self
     direction: SELF
-    source_pg: IMAGING
-    destination_pg: IMAGING
+    source_pg: FRSTR-IMAGING
+    destination_pg: FRSTR-IMAGING
     security_profile: Allow All
     final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
@@ -69,8 +69,8 @@ policies:
 
   - name: EHR-SERVERS-self
     direction: SELF
-    source_pg: EHR-SERVERS
-    destination_pg: EHR-SERVERS
+    source_pg: FRSTR-EHR-SERVERS
+    destination_pg: FRSTR-EHR-SERVERS
     security_profile: Allow All
     final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
@@ -78,8 +78,8 @@ policies:
 
   - name: VERIFIED-SERVERS-self
     direction: SELF
-    source_pg: VERIFIED-SERVERS
-    destination_pg: VERIFIED-SERVERS
+    source_pg: FRSTR-VERIFIED-SERVERS
+    destination_pg: FRSTR-VERIFIED-SERVERS
     security_profile: Allow All
     final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
@@ -87,8 +87,8 @@ policies:
 
   - name: VERIFIED-PCS-self
     direction: SELF
-    source_pg: VERIFIED-PCS
-    destination_pg: VERIFIED-PCS
+    source_pg: FRSTR-VERIFIED-PCS
+    destination_pg: FRSTR-VERIFIED-PCS
     security_profile: Allow All
     final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
@@ -98,8 +98,8 @@ policies:
   # full-mesh, just Modbus TCP between peers.
   - name: BUILDING-MANAGEMENT-self
     direction: SELF
-    source_pg: BUILDING-MANAGEMENT
-    destination_pg: BUILDING-MANAGEMENT
+    source_pg: FRSTR-BUILDING-MANAGEMENT
+    destination_pg: FRSTR-BUILDING-MANAGEMENT
     security_profile: FRSTR-BMS-MODBUS
     final_action: DENY
     policy_set: FRSTR-HOSPITAL
@@ -109,8 +109,8 @@ policies:
   # can still resolve hostnames; everything else dropped.
   - name: ISOLATION-self
     direction: SELF
-    source_pg: ISOLATION
-    destination_pg: ISOLATION
+    source_pg: FRSTR-ISOLATION
+    destination_pg: FRSTR-ISOLATION
     security_profile: FRSTR-QUARANTINE
     final_action: DENY
     policy_set: FRSTR-HOSPITAL
@@ -124,8 +124,8 @@ policies:
   # Infusion pumps ↔ EHR : HL7 charting (med-admin records)
   - name: INFUSION-PUMPS-to-EHR-SERVERS
     direction: BIDIRECTIONAL
-    source_pg: INFUSION-PUMPS
-    destination_pg: EHR-SERVERS
+    source_pg: FRSTR-INFUSION-PUMPS
+    destination_pg: FRSTR-EHR-SERVERS
     security_profile: FRSTR-ALLOW-HL7
     final_action: DENY
     policy_set: FRSTR-HOSPITAL
@@ -134,8 +134,8 @@ policies:
   # Patient monitors ↔ EHR : HL7 telemetry (vitals → record)
   - name: PATIENT-MONITORS-to-EHR-SERVERS
     direction: BIDIRECTIONAL
-    source_pg: PATIENT-MONITORS
-    destination_pg: EHR-SERVERS
+    source_pg: FRSTR-PATIENT-MONITORS
+    destination_pg: FRSTR-EHR-SERVERS
     security_profile: FRSTR-ALLOW-HL7
     final_action: DENY
     policy_set: FRSTR-HOSPITAL
@@ -144,8 +144,8 @@ policies:
   # Imaging ↔ EHR : DICOM modality-to-archive
   - name: IMAGING-to-EHR-SERVERS
     direction: BIDIRECTIONAL
-    source_pg: IMAGING
-    destination_pg: EHR-SERVERS
+    source_pg: FRSTR-IMAGING
+    destination_pg: FRSTR-EHR-SERVERS
     security_profile: FRSTR-ALLOW-DICOM
     final_action: DENY
     policy_set: FRSTR-HOSPITAL
@@ -161,8 +161,8 @@ policies:
 
   - name: EHR-SERVERS-to-VERIFIED-SERVERS
     direction: BIDIRECTIONAL
-    source_pg: EHR-SERVERS
-    destination_pg: VERIFIED-SERVERS
+    source_pg: FRSTR-EHR-SERVERS
+    destination_pg: FRSTR-VERIFIED-SERVERS
     security_profile: Allow All
     final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
@@ -173,8 +173,8 @@ policies:
   # required clinical-workstation-to-EHR workflow is approved.
   - name: EHR-SERVERS-to-VERIFIED-PCS
     direction: BIDIRECTIONAL
-    source_pg: EHR-SERVERS
-    destination_pg: VERIFIED-PCS
+    source_pg: FRSTR-EHR-SERVERS
+    destination_pg: FRSTR-VERIFIED-PCS
     security_profile: Deny All
     final_action: DENY
     policy_set: FRSTR-HOSPITAL
@@ -182,8 +182,8 @@ policies:
 
   - name: VERIFIED-SERVERS-to-VERIFIED-PCS
     direction: BIDIRECTIONAL
-    source_pg: VERIFIED-SERVERS
-    destination_pg: VERIFIED-PCS
+    source_pg: FRSTR-VERIFIED-SERVERS
+    destination_pg: FRSTR-VERIFIED-PCS
     security_profile: Allow All
     final_action: PERMIT
     policy_set: FRSTR-HOSPITAL
@@ -194,37 +194,37 @@ policies:
   # ──────────────────────────────────────────────────────────────
 
   # INFUSION-PUMPS row
-  - { name: INFUSION-PUMPS-to-PATIENT-MONITORS,    direction: BIDIRECTIONAL, source_pg: INFUSION-PUMPS, destination_pg: PATIENT-MONITORS,    security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: INFUSION-PUMPS-to-IMAGING,             direction: BIDIRECTIONAL, source_pg: INFUSION-PUMPS, destination_pg: IMAGING,             security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: INFUSION-PUMPS-to-VERIFIED-SERVERS,    direction: BIDIRECTIONAL, source_pg: INFUSION-PUMPS, destination_pg: VERIFIED-SERVERS,    security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: INFUSION-PUMPS-to-VERIFIED-PCS,        direction: BIDIRECTIONAL, source_pg: INFUSION-PUMPS, destination_pg: VERIFIED-PCS,        security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: INFUSION-PUMPS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: INFUSION-PUMPS, destination_pg: BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: INFUSION-PUMPS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: INFUSION-PUMPS, destination_pg: ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: INFUSION-PUMPS-to-PATIENT-MONITORS,    direction: BIDIRECTIONAL, source_pg: FRSTR-INFUSION-PUMPS, destination_pg: FRSTR-PATIENT-MONITORS,    security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: INFUSION-PUMPS-to-IMAGING,             direction: BIDIRECTIONAL, source_pg: FRSTR-INFUSION-PUMPS, destination_pg: FRSTR-IMAGING,             security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: INFUSION-PUMPS-to-VERIFIED-SERVERS,    direction: BIDIRECTIONAL, source_pg: FRSTR-INFUSION-PUMPS, destination_pg: FRSTR-VERIFIED-SERVERS,    security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: INFUSION-PUMPS-to-VERIFIED-PCS,        direction: BIDIRECTIONAL, source_pg: FRSTR-INFUSION-PUMPS, destination_pg: FRSTR-VERIFIED-PCS,        security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: INFUSION-PUMPS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: FRSTR-INFUSION-PUMPS, destination_pg: FRSTR-BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: INFUSION-PUMPS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: FRSTR-INFUSION-PUMPS, destination_pg: FRSTR-ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
 
   # PATIENT-MONITORS row
-  - { name: PATIENT-MONITORS-to-IMAGING,             direction: BIDIRECTIONAL, source_pg: PATIENT-MONITORS, destination_pg: IMAGING,             security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: PATIENT-MONITORS-to-VERIFIED-SERVERS,    direction: BIDIRECTIONAL, source_pg: PATIENT-MONITORS, destination_pg: VERIFIED-SERVERS,    security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: PATIENT-MONITORS-to-VERIFIED-PCS,        direction: BIDIRECTIONAL, source_pg: PATIENT-MONITORS, destination_pg: VERIFIED-PCS,        security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: PATIENT-MONITORS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: PATIENT-MONITORS, destination_pg: BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: PATIENT-MONITORS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: PATIENT-MONITORS, destination_pg: ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: PATIENT-MONITORS-to-IMAGING,             direction: BIDIRECTIONAL, source_pg: FRSTR-PATIENT-MONITORS, destination_pg: FRSTR-IMAGING,             security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: PATIENT-MONITORS-to-VERIFIED-SERVERS,    direction: BIDIRECTIONAL, source_pg: FRSTR-PATIENT-MONITORS, destination_pg: FRSTR-VERIFIED-SERVERS,    security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: PATIENT-MONITORS-to-VERIFIED-PCS,        direction: BIDIRECTIONAL, source_pg: FRSTR-PATIENT-MONITORS, destination_pg: FRSTR-VERIFIED-PCS,        security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: PATIENT-MONITORS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: FRSTR-PATIENT-MONITORS, destination_pg: FRSTR-BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: PATIENT-MONITORS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: FRSTR-PATIENT-MONITORS, destination_pg: FRSTR-ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
 
   # IMAGING row
-  - { name: IMAGING-to-VERIFIED-SERVERS,    direction: BIDIRECTIONAL, source_pg: IMAGING, destination_pg: VERIFIED-SERVERS,    security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: IMAGING-to-VERIFIED-PCS,        direction: BIDIRECTIONAL, source_pg: IMAGING, destination_pg: VERIFIED-PCS,        security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: IMAGING-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: IMAGING, destination_pg: BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: IMAGING-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: IMAGING, destination_pg: ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: IMAGING-to-VERIFIED-SERVERS,    direction: BIDIRECTIONAL, source_pg: FRSTR-IMAGING, destination_pg: FRSTR-VERIFIED-SERVERS,    security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: IMAGING-to-VERIFIED-PCS,        direction: BIDIRECTIONAL, source_pg: FRSTR-IMAGING, destination_pg: FRSTR-VERIFIED-PCS,        security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: IMAGING-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: FRSTR-IMAGING, destination_pg: FRSTR-BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: IMAGING-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: FRSTR-IMAGING, destination_pg: FRSTR-ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
 
   # EHR-SERVERS row
-  - { name: EHR-SERVERS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: EHR-SERVERS, destination_pg: BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: EHR-SERVERS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: EHR-SERVERS, destination_pg: ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: EHR-SERVERS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: FRSTR-EHR-SERVERS, destination_pg: FRSTR-BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: EHR-SERVERS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: FRSTR-EHR-SERVERS, destination_pg: FRSTR-ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
 
   # VERIFIED-SERVERS row
-  - { name: VERIFIED-SERVERS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: VERIFIED-SERVERS, destination_pg: BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: VERIFIED-SERVERS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: VERIFIED-SERVERS, destination_pg: ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: VERIFIED-SERVERS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: FRSTR-VERIFIED-SERVERS, destination_pg: FRSTR-BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: VERIFIED-SERVERS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: FRSTR-VERIFIED-SERVERS, destination_pg: FRSTR-ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
 
   # VERIFIED-PCS row
-  - { name: VERIFIED-PCS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: VERIFIED-PCS, destination_pg: BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
-  - { name: VERIFIED-PCS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: VERIFIED-PCS, destination_pg: ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: VERIFIED-PCS-to-BUILDING-MANAGEMENT, direction: BIDIRECTIONAL, source_pg: FRSTR-VERIFIED-PCS, destination_pg: FRSTR-BUILDING-MANAGEMENT, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: VERIFIED-PCS-to-ISOLATION,          direction: BIDIRECTIONAL, source_pg: FRSTR-VERIFIED-PCS, destination_pg: FRSTR-ISOLATION,          security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
 
   # BUILDING-MANAGEMENT row
-  - { name: BUILDING-MANAGEMENT-to-ISOLATION, direction: BIDIRECTIONAL, source_pg: BUILDING-MANAGEMENT, destination_pg: ISOLATION, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
+  - { name: BUILDING-MANAGEMENT-to-ISOLATION, direction: BIDIRECTIONAL, source_pg: FRSTR-BUILDING-MANAGEMENT, destination_pg: FRSTR-ISOLATION, security_profile: Deny All, final_action: DENY, policy_set: FRSTR-HOSPITAL, state: MONITOR_ONLY }
